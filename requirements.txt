@@ -1,0 +1,23 @@
+# Core Python Data Stack
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+
+# Machine Learning Models
+lightgbm
+
+# NBA Data Access
+nba_api
+
+# Utilities
+tqdm
+python-dotenv
+
+# Notebook Support
+jupyter
+ipykernel
+
+# Optional (but recommended)
+pyarrow
