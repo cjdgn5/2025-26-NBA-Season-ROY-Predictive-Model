@@ -1,2 +1,29 @@
 # 2025-26-NBA-Season-ROY-Predictive-Model
-A predictive model to forecast the winner of the 2025-26 NBA Season: ROY (Rookie of the Year). Will analyze trends from past seasons, and construct a model to estimate the likelihood of each award winner based on player performance metrics. Lastly, will rank the candidates in order from most likely to win the award to least likely. 
+NBA Rookie of the Year (ROY) Prediction
+
+A machine learning project predicting Rookie of the Year winners using historical NBA data.
+
+## 📌 Overview
+
+This repository contains an end-to-end machine learning pipeline for forecasting the NBA Rookie of the Year (ROY) award using historical player, team, and contextual data gathered from public sources.
+
+The project implements:
+- Automated data collection (via nba_api)
+- Dataset construction covering all rookies from multiple seasons
+- Cleaning & feature engineering (per-75 stats, efficiency, usage, team context)
+- Modeling using baseline logistic regression and LightGBM
+- Season-grouped evaluation (Leave-One-Season-Out CV)
+- Season-softmax probability prediction
+- Final formatted predictions.csv required for delivery
+
+## 📊 Data Sources
+
+Data is gathered exclusively from public sources, including
+- 
+
+## Data Pipline
+
+## Predictive Model Approach
+
+## Future Work
+
