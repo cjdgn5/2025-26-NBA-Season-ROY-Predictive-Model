@@ -74,6 +74,27 @@ def train():
     df_preds.to_csv(pred_path, index=False)
     print('Saved predictions to', pred_path)
 
+    # Produce the required two-column `predictions.csv` for the latest season
+    def season_start_year(season_str: str):
+        if not isinstance(season_str, str):
+            return -1
+        parts = season_str.split('-')
+        try:
+            return int(parts[0])
+        except Exception:
+            import re
+            m = re.search(r"(\d{4})", season_str)
+            return int(m.group(1)) if m else -1
+
+    df_preds['season_start'] = df_preds['SEASON'].apply(season_start_year)
+    latest_start = df_preds['season_start'].max()
+    latest_season_df = df_preds[df_preds['season_start'] == latest_start].copy()
+    two_col = latest_season_df[['PLAYER_NAME', 'prob_roy']].rename(columns={'PLAYER_NAME': 'player_name', 'prob_roy': 'probability'})
+    two_col['probability'] = two_col['probability'].clip(0,1).round(6)
+    two_col_path = PRED / 'predictions.csv'
+    two_col.to_csv(two_col_path, index=False)
+    print('Saved two-column predictions to', two_col_path)
+
 
 if __name__ == '__main__':
     train()
