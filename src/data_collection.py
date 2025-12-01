@@ -20,7 +20,6 @@ from typing import List
 
 import pandas as pd
 from nba_api.stats.endpoints import leaguedashplayerstats, playercareerstats, playerawards
-from nba_api.stats.library.parameters import SeasonAll
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / 'data_raw'
@@ -65,8 +64,28 @@ def fetch_season_stats(season: str) -> pd.DataFrame:
     return df
 
 
+def normalize_season(season_str: str) -> str:
+    """Normalize season strings so comparisons are reliable.
+    Accepts formats like '2011-12' or '2011'. Converts '2011' -> '2011-12'.
+    Leaves already hyphenated seasons unchanged.
+    """
+    if not season_str:
+        return ''
+    s = str(season_str).strip()
+    if len(s) == 9 and s[4] == '-':
+        return s
+    if len(s) == 4 and s.isdigit():
+        start = int(s)
+        end = (start + 1) % 100
+        return f"{start}-{str(end).zfill(2)}"
+    return s
+
+
 def player_first_season(player_id: int) -> str:
-    """Determine the player's first season (rookie season) using playercareerstats."""
+    """Determine player's rookie season using PlayerCareerStats.
+    Uses the earliest unique season ID after sorting by start year.
+    Cached result stored in data_raw/.
+    """
     cache = RAW_DIR / f'career_{player_id}.json'
     if cache.exists():
         data = load_json(cache)
@@ -75,9 +94,11 @@ def player_first_season(player_id: int) -> str:
     try:
         res = playercareerstats.PlayerCareerStats(player_id=player_id)
         df = res.get_data_frames()[0]
-        seasons = df['SEASON_ID'].tolist()
-        rookie = seasons[-1] if seasons else None
-        save_json({'rookie_season': rookie, 'seasons': seasons}, cache)
+        seasons_list = [str(s) for s in df.get('SEASON_ID', [])]
+        # Deduplicate and sort by numeric starting year
+        unique = sorted(set(seasons_list), key=lambda s: int(str(s).split('-')[0])) if seasons_list else []
+        rookie = unique[0] if unique else None
+        save_json({'rookie_season': rookie, 'seasons': unique}, cache)
         time.sleep(0.6)
         return rookie
     except Exception as e:
@@ -103,12 +124,13 @@ def player_has_roy(player_id: int, season: str) -> bool:
             logger.warning('Failed to fetch awards for %s: %s', player_id, e)
             awards = []
 
+    norm_target = normalize_season(season)
     for a in awards:
-        # Award name fields may vary; check 'AWARD_NAME' or 'AWARD'
         name = a.get('AWARD_NAME') or a.get('AWARD') or ''
         season_award = a.get('SEASON') or a.get('SEASON_ID') or ''
-        if 'Rookie of the Year' in str(name) and str(season_award) == str(season):
-            return True
+        if 'Rookie of the Year' in str(name):
+            if normalize_season(season_award) == norm_target:
+                return True
     return False
 
 
