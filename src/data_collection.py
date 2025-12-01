@@ -19,6 +19,7 @@ import logging
 from typing import List
 
 import pandas as pd
+from datetime import date
 from nba_api.stats.endpoints import leaguedashplayerstats, playercareerstats, playerawards
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,10 +31,18 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('data_collection')
 
-SEASONS = [
+def current_season() -> str:
+    """Derive the current NBA season string like '2025-26'. Assumes season start Aug/Sept."""
+    today = date.today()
+    start_year = today.year if today.month >= 8 else today.year - 1
+    end_year = (start_year + 1) % 100
+    return f"{start_year}-{str(end_year).zfill(2)}"
+
+BASE_SEASONS = [
     '2010-11','2011-12','2012-13','2013-14','2014-15','2015-16','2016-17','2017-18',
     '2018-19','2019-20','2020-21','2021-22','2022-23','2023-24','2024-25'
 ]
+SEASONS = sorted(set(BASE_SEASONS + [current_season()]))
 
 # Caching helpers
 
