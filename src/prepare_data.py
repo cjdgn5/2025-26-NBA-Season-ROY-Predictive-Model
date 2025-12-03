@@ -38,18 +38,36 @@ def prepare():
             df[c] = 0
 
     # Compute per-36 features
-    df['PTS_per36'] = per36(df['PTS'], df['MIN'], df['GP'])
-    df['REB_per36'] = per36(df['REB'], df['MIN'], df['GP'])
-    df['AST_per36'] = per36(df['AST'], df['MIN'], df['GP'])
-    df['STL_per36'] = per36(df['STL'], df['MIN'], df['GP'])
-    df['BLK_per36'] = per36(df['BLK'], df['MIN'], df['GP'])
+    raw_pts36 = per36(df['PTS'], df['MIN'], df['GP'])
+    raw_reb36 = per36(df['REB'], df['MIN'], df['GP'])
+    raw_ast36 = per36(df['AST'], df['MIN'], df['GP'])
+    raw_stl36 = per36(df['STL'], df['MIN'], df['GP'])
+    raw_blk36 = per36(df['BLK'], df['MIN'], df['GP'])
+    
+    # Apply Bayesian smoothing: shrink low-minute per-36 toward league mean
+    # weight = MIN / (MIN + prior_weight); smoothed = weight*raw + (1-weight)*prior_mean
+    prior_weight = 300  # equivalent to ~8-10 games of starter minutes
+    prior_pts = raw_pts36.mean()
+    prior_reb = raw_reb36.mean()
+    prior_ast = raw_ast36.mean()
+    prior_stl = raw_stl36.mean()
+    prior_blk = raw_blk36.mean()
+    
+    df['PTS_per36'] = (df['MIN']*raw_pts36 + prior_weight*prior_pts) / (df['MIN'] + prior_weight)
+    df['REB_per36'] = (df['MIN']*raw_reb36 + prior_weight*prior_reb) / (df['MIN'] + prior_weight)
+    df['AST_per36'] = (df['MIN']*raw_ast36 + prior_weight*prior_ast) / (df['MIN'] + prior_weight)
+    df['STL_per36'] = (df['MIN']*raw_stl36 + prior_weight*prior_stl) / (df['MIN'] + prior_weight)
+    df['BLK_per36'] = (df['MIN']*raw_blk36 + prior_weight*prior_blk) / (df['MIN'] + prior_weight)
 
     # Shooting efficiency features
     df['TS'] = df['PTS'] / (2*(df['FGA'] + 0.44*df['FTA']) + 1e-6)
     df['FG3_RATE'] = np.where(df['FGA']>0, df['FG3A']/df['FGA'], 0)
+    
+    # Add minutes per game (playing time trust indicator)
+    df['MIN_per_game'] = np.where(df['GP']>0, df['MIN']/df['GP'], 0)
 
     features = [
-        'GP','MIN','PTS_per36','REB_per36','AST_per36','STL_per36','BLK_per36',
+        'GP','MIN','MIN_per_game','PTS_per36','REB_per36','AST_per36','STL_per36','BLK_per36',
         'TS','FG_PCT','FG3_RATE','FT_PCT','TOV'
     ]
 
