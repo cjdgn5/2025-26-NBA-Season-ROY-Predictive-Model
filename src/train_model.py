@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.preprocessing import StandardScaler
 
 try:
     import xgboost as xgb
@@ -38,12 +39,16 @@ def train():
     X = df.drop(columns=['PLAYER_ID','PLAYER_NAME','SEASON','label'])
     y = df['label']
 
+    # Scale features for better convergence
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
     # Simple baseline: logistic regression
-    lr = LogisticRegression(max_iter=1000)
+    lr = LogisticRegression(max_iter=2000, solver='saga', random_state=42)
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    aucs = cross_val_score(lr, X, y, cv=cv, scoring='roc_auc')
+    aucs = cross_val_score(lr, X_scaled, y, cv=cv, scoring='roc_auc')
     print('LogisticRegression CV AUCs:', aucs, 'mean:', np.mean(aucs))
-    lr.fit(X, y)
+    lr.fit(X_scaled, y)
 
     best_model = lr
     best_score = np.mean(aucs)
@@ -52,21 +57,21 @@ def train():
     # Try XGBoost
     if HAS_XGB:
         print('Training XGBoost...')
-        xg = xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-        aucs_x = cross_val_score(xg, X, y, cv=cv, scoring='roc_auc')
+        xg = xgb.XGBClassifier(eval_metric='logloss', random_state=42)
+        aucs_x = cross_val_score(xg, X_scaled, y, cv=cv, scoring='roc_auc')
         print('XGBoost CV AUCs:', aucs_x, 'mean:', np.mean(aucs_x))
-        xg.fit(X, y)
+        xg.fit(X_scaled, y)
         if np.mean(aucs_x) > best_score:
             best_model = xg
             best_score = np.mean(aucs_x)
             model_name = 'xgboost'
 
     out_path = OUTPUTS / 'roy_model.pkl'
-    joblib.dump({'model': best_model, 'features': X.columns.tolist()}, out_path)
+    joblib.dump({'model': best_model, 'scaler': scaler, 'features': X.columns.tolist()}, out_path)
     print('Saved best model', model_name, 'to', out_path)
 
     # Generate predictions (probabilities) and save ranking
-    probs = best_model.predict_proba(X)[:,1]
+    probs = best_model.predict_proba(X_scaled)[:,1]
     df_preds = df[['PLAYER_ID','PLAYER_NAME','SEASON']].copy()
     df_preds['prob_roy'] = probs
     df_preds = df_preds.sort_values(['SEASON','prob_roy'], ascending=[False, False])
