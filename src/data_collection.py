@@ -135,7 +135,8 @@ def player_has_roy(player_id: int, season: str) -> bool:
 
     norm_target = normalize_season(season)
     for a in awards:
-        name = a.get('AWARD_NAME') or a.get('AWARD') or ''
+        # Check DESCRIPTION field (primary), then AWARD_NAME, then AWARD as fallbacks
+        name = a.get('DESCRIPTION') or a.get('AWARD_NAME') or a.get('AWARD') or ''
         season_award = a.get('SEASON') or a.get('SEASON_ID') or ''
         if 'Rookie of the Year' in str(name):
             if normalize_season(season_award) == norm_target:
