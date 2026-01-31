@@ -5,7 +5,7 @@ A machine learning project predicting Rookie of the Year winners using historica
 
 ## 📌 Overview
 
-This repository contains an end-to-end machine learning pipeline for forecasting the NBA Rookie of the Year (ROY) award using historical player, team, and contextual data gathered from public sources.
+This repository contains an end-to-end machine learning pipeline for forecasting the NBA Rookie of the Year (ROY) award using historical player, team, and contextual data gathered from nba_api
 
 The project implements:
 - Automated data collection (via nba_api)
