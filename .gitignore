@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific: Generated data and model files
+data_raw/
+data_processed/*.csv
+outputs/
+predictions/
