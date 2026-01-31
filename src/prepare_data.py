@@ -1,7 +1,7 @@
 """
 Prepare and engineer features for ROY prediction.
 
-Reads `data_processed/rookies_labeled.csv`, computes per-36 stats, handles missing values,
+Reads `data_processed/rookies_labeled.csv`, computes per-75 possession stats, handles missing values,
 and writes `data_processed/roy_dataset.csv` used for modeling.
 """
 from pathlib import Path
@@ -13,10 +13,11 @@ PROCESSED_DIR = ROOT / 'data_processed'
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def per36(col, minutes, gp):
-    # per 36 = (total / minutes) * 36 ; if minutes==0, fallback to per game
+def per75(col, minutes, gp):
+    # per 75 possessions = (total / minutes) * 75 ; if minutes==0, fallback to per game
+    # 75 possessions approximates average team possessions in a 48-minute game
     with np.errstate(divide='ignore', invalid='ignore'):
-        v = np.where(minutes>0, (col / minutes) * 36, col / np.where(gp>0, gp, 1))
+        v = np.where(minutes>0, (col / minutes) * 75, col / np.where(gp>0, gp, 1))
     return v
 
 
@@ -37,27 +38,27 @@ def prepare():
         else:
             df[c] = 0
 
-    # Compute per-36 features
-    raw_pts36 = per36(df['PTS'], df['MIN'], df['GP'])
-    raw_reb36 = per36(df['REB'], df['MIN'], df['GP'])
-    raw_ast36 = per36(df['AST'], df['MIN'], df['GP'])
-    raw_stl36 = per36(df['STL'], df['MIN'], df['GP'])
-    raw_blk36 = per36(df['BLK'], df['MIN'], df['GP'])
+    # Compute per-75 possession features (better accounts for pace than per-36)
+    raw_pts75 = per75(df['PTS'], df['MIN'], df['GP'])
+    raw_reb75 = per75(df['REB'], df['MIN'], df['GP'])
+    raw_ast75 = per75(df['AST'], df['MIN'], df['GP'])
+    raw_stl75 = per75(df['STL'], df['MIN'], df['GP'])
+    raw_blk75 = per75(df['BLK'], df['MIN'], df['GP'])
     
-    # Apply Bayesian smoothing: shrink low-minute per-36 toward league mean
+    # Apply Bayesian smoothing: shrink low-minute per-75 toward league mean
     # weight = MIN / (MIN + prior_weight); smoothed = weight*raw + (1-weight)*prior_mean
     prior_weight = 300  # equivalent to ~8-10 games of starter minutes
-    prior_pts = raw_pts36.mean()
-    prior_reb = raw_reb36.mean()
-    prior_ast = raw_ast36.mean()
-    prior_stl = raw_stl36.mean()
-    prior_blk = raw_blk36.mean()
+    prior_pts = raw_pts75.mean()
+    prior_reb = raw_reb75.mean()
+    prior_ast = raw_ast75.mean()
+    prior_stl = raw_stl75.mean()
+    prior_blk = raw_blk75.mean()
     
-    df['PTS_per36'] = (df['MIN']*raw_pts36 + prior_weight*prior_pts) / (df['MIN'] + prior_weight)
-    df['REB_per36'] = (df['MIN']*raw_reb36 + prior_weight*prior_reb) / (df['MIN'] + prior_weight)
-    df['AST_per36'] = (df['MIN']*raw_ast36 + prior_weight*prior_ast) / (df['MIN'] + prior_weight)
-    df['STL_per36'] = (df['MIN']*raw_stl36 + prior_weight*prior_stl) / (df['MIN'] + prior_weight)
-    df['BLK_per36'] = (df['MIN']*raw_blk36 + prior_weight*prior_blk) / (df['MIN'] + prior_weight)
+    df['PTS_per75'] = (df['MIN']*raw_pts75 + prior_weight*prior_pts) / (df['MIN'] + prior_weight)
+    df['REB_per75'] = (df['MIN']*raw_reb75 + prior_weight*prior_reb) / (df['MIN'] + prior_weight)
+    df['AST_per75'] = (df['MIN']*raw_ast75 + prior_weight*prior_ast) / (df['MIN'] + prior_weight)
+    df['STL_per75'] = (df['MIN']*raw_stl75 + prior_weight*prior_stl) / (df['MIN'] + prior_weight)
+    df['BLK_per75'] = (df['MIN']*raw_blk75 + prior_weight*prior_blk) / (df['MIN'] + prior_weight)
 
     # Shooting efficiency features
     df['TS'] = df['PTS'] / (2*(df['FGA'] + 0.44*df['FTA']) + 1e-6)
@@ -65,10 +66,27 @@ def prepare():
     
     # Add minutes per game (playing time trust indicator)
     df['MIN_per_game'] = np.where(df['GP']>0, df['MIN']/df['GP'], 0)
+    
+    # Calculate Usage Rate (USG%): percentage of team plays used by player while on court
+    # Simplified as per-75 possession usage actions
+    df['USG_RATE'] = np.where(
+        df['MIN'] > 0,
+        100 * (df['FGA'] + 0.44*df['FTA'] + df['TOV']) / (df['MIN'] / 75),  # per-75 usage actions
+        0
+    )
 
     features = [
-        'GP','MIN','MIN_per_game','PTS_per36','REB_per36','AST_per36','STL_per36','BLK_per36',
-        'TS','FG_PCT','FG3_RATE','FT_PCT','TOV'
+        'GP','MIN',
+        'MIN_per_game',
+        'PTS_per75',
+        'REB_per75',
+        'AST_per75',
+        'STL_per75',
+        'BLK_per75',
+        'TS','FG_PCT',
+        'FG3_RATE',
+        'FT_PCT',
+        'TOV','USG_RATE'
     ]
 
     # Keep label
