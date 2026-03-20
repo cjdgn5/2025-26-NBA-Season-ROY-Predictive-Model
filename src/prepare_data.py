@@ -157,9 +157,8 @@ def prepare():
     df['PTS_per_game'] = np.where(df['GP'] > 0, df['PTS'] / df['GP'], 0)
     df['REB_per_game'] = np.where(df['GP'] > 0, df['REB'] / df['GP'], 0)
     df['AST_per_game'] = np.where(df['GP'] > 0, df['AST'] / df['GP'], 0)
-    df['STARTS'] = df['GS'].clip(lower=0)
-    df['START_PCT'] = np.where(df['GP'] > 0, df['STARTS'] / df['GP'], 0)
-    df['START_PCT'] = df['START_PCT'].clip(lower=0, upper=1)
+    df['FG3A_per_game'] = np.where(df['GP'] > 0, df['FG3A'] / df['GP'], 0)
+    # STARTS/START_PCT excluded from the modeling feature set.
 
     # Compute per-75 possession features (better accounts for pace than per-36)
     raw_pts75 = per75(df['PTS'], df['MIN'], df['GP'])
@@ -197,6 +196,7 @@ def prepare():
         100 * (df['FGA'] + 0.44*df['FTA'] + df['TOV']) / df['MIN'],
         0
     )
+    df['USG_rank_rookies'] = df.groupby('SEASON')['USG_RATE'].rank(method='min', ascending=False)
 
     # Draft and age context from cached player info.
     player_ids = sorted(set(df['PLAYER_ID'].tolist()))
@@ -209,15 +209,7 @@ def prepare():
             'birthdate': info.get('birthdate'),
         }
     df['DRAFT_PICK_RAW'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('draft_pick'))
-    df['DRAFT_ROUND_RAW'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('draft_round'))
-    df['IS_UNDRAFTED'] = df['DRAFT_PICK_RAW'].isna().astype(int)
     df['DRAFT_PICK'] = pd.to_numeric(df['DRAFT_PICK_RAW'], errors='coerce').fillna(61)
-    df['DRAFT_ROUND'] = pd.to_numeric(df['DRAFT_ROUND_RAW'], errors='coerce')
-    df['DRAFT_ROUND'] = np.where(
-        df['DRAFT_ROUND'].notna(),
-        df['DRAFT_ROUND'],
-        np.where(df['DRAFT_PICK'] <= 30, 1, np.where(df['DRAFT_PICK'] <= 60, 2, 3))
-    )
     df['AGE_OCT1'] = [
         age_on_oct1(season, player_info.get(pid, {}).get('birthdate'))
         for pid, season in zip(df['PLAYER_ID'], df['SEASON'])
@@ -230,12 +222,6 @@ def prepare():
 
     # Draft normalization features for improved scale handling.
     df['DRAFT_PICK_LOG'] = np.log1p(df['DRAFT_PICK'])
-    df['DRAFT_TIER'] = np.where(
-        df['IS_UNDRAFTED'] == 1,
-        4,
-        np.where(df['DRAFT_PICK'] <= 14, 1, np.where(df['DRAFT_PICK'] <= 30, 2, 3))
-    )
-
     # Rookie-relative rank features within each season.
     df['PTS_rank_rookies'] = df.groupby('SEASON')['PTS_per_game'].rank(method='min', ascending=False)
     df['MIN_rank_rookies'] = df.groupby('SEASON')['TOTAL_MINUTES'].rank(method='min', ascending=False)
@@ -244,23 +230,21 @@ def prepare():
 
     features = [
         'GP','MIN',
-        'STARTS','START_PCT',
         'TEAM_GAMES','TEAM_WIN_PCT','GAMES_PLAYED_PCT',
         'MINUTES_SHARE','POINTS_SHARE',
         'TOTAL_POINTS','TOTAL_MINUTES',
         'PTS_per_game','REB_per_game','AST_per_game',
+        'FG3A_per_game',
         'MIN_per_game',
         'PTS_per75',
         'REB_per75',
         'AST_per75',
         'STL_per75',
         'BLK_per75',
-        'TS','FG_PCT',
-        'FG3_RATE',
-        'FT_PCT',
-        'TOV','USG_RATE',
+        'TS','FG3_PCT',
+        'TOV','USG_RATE','USG_rank_rookies',
         'PTS_rank_rookies','MIN_rank_rookies','TS_rank_rookies','TEAM_WIN_PCT_rank_rookies',
-        'DRAFT_PICK_LOG','DRAFT_TIER','DRAFT_ROUND','IS_UNDRAFTED','AGE_OCT1'
+        'DRAFT_PICK_LOG','AGE_OCT1'
     ]
 
     # Keep label

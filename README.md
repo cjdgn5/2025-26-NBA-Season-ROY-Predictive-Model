@@ -1,82 +1,73 @@
-# 2025-26-NBA-Season-ROY-Predictive-Model
+# 2025-26 NBA ROY Predictive Model
 
-NBA Rookie of the Year (ROY) prediction pipeline built with `nba_api` and scikit-learn.
+This project predicts NBA Rookie of the Year (ROY) candidates using historical and current-season player data.
 
-## Overview
+## What This Pipeline Does
 
-This repository contains an end-to-end workflow that:
-- Collects historical season and player data from NBA Stats endpoints
-- Identifies rookies by season
-- Labels ROY winners
-- Engineers modeling features
-- Trains a classifier and exports prediction files
+The workflow has 3 main steps:
 
-Current scope includes seasons `2010-11` through `2024-25`, plus a dynamically derived current season (for example, `2025-26`).
+1. Collect data  
+Pull season player stats, identify rookies, and build ROY labels.
 
-## Project Structure
+2. Prepare modeling data  
+Create the final feature table used for training and scoring.
 
-- `src/data_collection.py`: data ingestion, rookie detection, ROY labeling, and raw/processed CSV creation
-- `src/prepare_data.py`: feature engineering and creation of final training dataset
-- `src/train_model.py`: model training, CV evaluation, model artifact export, and predictions export
-- `data_raw/`: cached JSON responses from API endpoints
-- `data_processed/`: generated CSV datasets for training
-- `outputs/`: trained model artifact (`roy_model.pkl`)
-- `predictions/`: prediction outputs (`roy_predictions_all_seasons.csv`, `predictions.csv`)
+3. Train and score  
+Train the model, evaluate it, and export current-season rankings.
 
-## Data Sources
+## High-Level Workflow
 
-Primary source: `nba_api` (stats.nba.com), notably:
-- `LeagueDashPlayerStats`
-- `PlayerAwards`
+### 1) Data Collection (`src/data_collection.py`)
+- Pulls/caches season-level stats from `nba_api`
+- Detects rookies by season
+- Labels ROY winners using season-level and player-level caches
+- Writes:
+  - `data_processed/raw_season_stats_all_seasons.csv`
+  - `data_processed/rookies_labeled.csv`
 
-## Pipeline Workflow
+### 2) Feature Prep (`src/prepare_data.py`)
+- Builds model-ready features from rookie season rows
+- Includes production, efficiency, usage, availability, team context, and rookie-relative rank features
+- Writes:
+  - `data_processed/roy_dataset.csv`
 
-1. Collect data
-- Fetch season-level player stats (`leaguedash_{season}.json` cache)
-- Detect rookies using:
-- `SEASON_EXP == 0` when available, otherwise
-- rookie-filtered league dash call (`leaguedash_rookies_{season}.json` cache)
-- Label ROY using combined cache strategy:
-- season cache first: `roy_winners_{season}.json`
-- per-player awards cache second: `awards_{player_id}.json`
-- targeted `PlayerAwards` fallback only when needed
-- Output:
-- `data_processed/raw_season_stats_all_seasons.csv`
-- `data_processed/rookies_labeled.csv`
+### 3) Training + Predictions (`src/train_model.py`)
+- Trains model(s) and selects best CV performer
+- Saves model artifact and run metadata
+- Exports predictions for all seasons and the latest season
+- Uses season-normalized race odds for presentation (sum to 1 within a season)
+- Writes:
+  - `outputs/roy_model.pkl`
+  - `outputs/run_info.json`
+  - `predictions/roy_predictions_all_seasons.csv`
+  - `predictions/predictions.csv`
 
-2. Prepare features
-- Build per-75 production features with Bayesian smoothing
-- Build efficiency and usage-related features (`TS`, `FG3_RATE`, `USG_RATE`, etc.)
-- Output:
-- `data_processed/roy_dataset.csv`
-
-3. Train and predict
-- Train baseline logistic regression pipeline
-- Optionally train XGBoost if installed and select best by CV AUC
-- Grouped CV by season (`GroupKFold`)
-- Output:
-- `outputs/roy_model.pkl`
-- `predictions/roy_predictions_all_seasons.csv`
-- `predictions/predictions.csv` (latest season, required two-column format)
-
-## Quick Start
-
-1. Install dependencies
+## Quick Start (CMD)
 
 ```cmd
 pip install -r requirements.txt
 pip install -r requirements_extra.txt
-```
-
-2. Run pipeline
-
-```cmd
 python src\data_collection.py
 python src\prepare_data.py
 python src\train_model.py
 ```
 
-## Notes
+## Useful Re-Run Options
 
-- API calls are heavily cached in `data_raw/` to speed up reruns.
-- `predictions/predictions.csv` is generated from the latest available season in the dataset.
+Refresh current-season stats:
+
+```cmd
+python src\data_collection.py --refresh-current-season-stats
+```
+
+Refresh all seasons:
+
+```cmd
+python src\data_collection.py --refresh-all-season-stats
+```
+
+## Output Summary
+
+- `predictions/predictions.csv` is the latest-season prediction file.
+- `predictions/roy_predictions_all_seasons.csv` contains historical + current model scores.
+- `outputs/run_info.json` stores training metadata for reproducibility.
