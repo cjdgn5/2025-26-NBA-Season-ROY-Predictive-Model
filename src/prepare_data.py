@@ -75,16 +75,6 @@ def season_start_year(season_str: str) -> int:
         return -1
 
 
-def normalize_season_str(season_str: str) -> str:
-    s = str(season_str).strip()
-    if len(s) == 9 and s[4] == '-':
-        return s
-    if len(s) == 4 and s.isdigit():
-        start = int(s)
-        return f"{start}-{str((start + 1) % 100).zfill(2)}"
-    return s
-
-
 def age_on_oct1(season_str: str, birthdate: str):
     if not birthdate:
         return np.nan
@@ -118,6 +108,8 @@ def prepare():
     df['TEAM_ID'] = pd.to_numeric(df.get('TEAM_ID', -1), errors='coerce').fillna(-1).astype(int)
     df['MIN'] = pd.to_numeric(df.get('MIN', 0), errors='coerce').fillna(0)
     df['GP'] = pd.to_numeric(df.get('GP', 0), errors='coerce').fillna(0)
+    gs_raw = df['GS'] if 'GS' in df.columns else pd.Series(0, index=df.index)
+    df['GS'] = pd.to_numeric(gs_raw, errors='coerce').fillna(0)
     df['W'] = pd.to_numeric(df.get('W', 0), errors='coerce').fillna(0)
     df['L'] = pd.to_numeric(df.get('L', 0), errors='coerce').fillna(0)
     numeric_cols = ['PTS','REB','AST','STL','BLK','TOV','FGM','FGA','FG_PCT','FG3M','FG3A','FG3_PCT','FTM','FTA','FT_PCT']
@@ -158,6 +150,16 @@ def prepare():
     df['SEASON_MAX_GP'] = pd.to_numeric(df['SEASON_MAX_GP'], errors='coerce').fillna(82)
     df['GAMES_PLAYED_PCT'] = np.where(df['SEASON_MAX_GP'] > 0, df['GP'] / df['SEASON_MAX_GP'], 0)
     df['GAMES_PLAYED_PCT'] = df['GAMES_PLAYED_PCT'].clip(lower=0, upper=1)
+
+    # Real production volume features.
+    df['TOTAL_POINTS'] = df['PTS']
+    df['TOTAL_MINUTES'] = df['MIN']
+    df['PTS_per_game'] = np.where(df['GP'] > 0, df['PTS'] / df['GP'], 0)
+    df['REB_per_game'] = np.where(df['GP'] > 0, df['REB'] / df['GP'], 0)
+    df['AST_per_game'] = np.where(df['GP'] > 0, df['AST'] / df['GP'], 0)
+    df['STARTS'] = df['GS'].clip(lower=0)
+    df['START_PCT'] = np.where(df['GP'] > 0, df['STARTS'] / df['GP'], 0)
+    df['START_PCT'] = df['START_PCT'].clip(lower=0, upper=1)
 
     # Compute per-75 possession features (better accounts for pace than per-36)
     raw_pts75 = per75(df['PTS'], df['MIN'], df['GP'])
@@ -226,32 +228,27 @@ def prepare():
     else:
         df['AGE_OCT1'] = df['AGE_OCT1'].fillna(20.0)
 
-    # Award buzz proxy from cached awards.
-    awards_cache = {}
-    def all_rookie_flags(pid: int, season: str):
-        if pid not in awards_cache:
-            data = load_json_if_exists(RAW_DIR / f'awards_{pid}.json') or {}
-            awards_cache[pid] = data.get('awards', [])
-        all_rookie = 0
-        all_rookie_first = 0
-        target_season = normalize_season_str(season)
-        for award in awards_cache[pid]:
-            name = award.get('DESCRIPTION') or award.get('AWARD_NAME') or award.get('AWARD') or ''
-            season_award = normalize_season_str(award.get('SEASON') or award.get('SEASON_ID') or '')
-            if str(name).find('All-Rookie Team') >= 0 and str(season_award) == target_season:
-                all_rookie = 1
-                if str(award.get('ALL_NBA_TEAM_NUMBER', '')).strip() == '1':
-                    all_rookie_first = 1
-        return all_rookie, all_rookie_first
+    # Draft normalization features for improved scale handling.
+    df['DRAFT_PICK_LOG'] = np.log1p(df['DRAFT_PICK'])
+    df['DRAFT_TIER'] = np.where(
+        df['IS_UNDRAFTED'] == 1,
+        4,
+        np.where(df['DRAFT_PICK'] <= 14, 1, np.where(df['DRAFT_PICK'] <= 30, 2, 3))
+    )
 
-    flags = [all_rookie_flags(pid, season) for pid, season in zip(df['PLAYER_ID'], df['SEASON'])]
-    df['ALL_ROOKIE_TEAM_FLAG'] = [f[0] for f in flags]
-    df['ALL_ROOKIE_FIRST_TEAM_FLAG'] = [f[1] for f in flags]
+    # Rookie-relative rank features within each season.
+    df['PTS_rank_rookies'] = df.groupby('SEASON')['PTS_per_game'].rank(method='min', ascending=False)
+    df['MIN_rank_rookies'] = df.groupby('SEASON')['TOTAL_MINUTES'].rank(method='min', ascending=False)
+    df['TS_rank_rookies'] = df.groupby('SEASON')['TS'].rank(method='min', ascending=False)
+    df['TEAM_WIN_PCT_rank_rookies'] = df.groupby('SEASON')['TEAM_WIN_PCT'].rank(method='min', ascending=False)
 
     features = [
         'GP','MIN',
+        'STARTS','START_PCT',
         'TEAM_GAMES','TEAM_WIN_PCT','GAMES_PLAYED_PCT',
         'MINUTES_SHARE','POINTS_SHARE',
+        'TOTAL_POINTS','TOTAL_MINUTES',
+        'PTS_per_game','REB_per_game','AST_per_game',
         'MIN_per_game',
         'PTS_per75',
         'REB_per75',
@@ -262,8 +259,8 @@ def prepare():
         'FG3_RATE',
         'FT_PCT',
         'TOV','USG_RATE',
-        'DRAFT_PICK','DRAFT_ROUND','IS_UNDRAFTED','AGE_OCT1',
-        'ALL_ROOKIE_TEAM_FLAG','ALL_ROOKIE_FIRST_TEAM_FLAG'
+        'PTS_rank_rookies','MIN_rank_rookies','TS_rank_rookies','TEAM_WIN_PCT_rank_rookies',
+        'DRAFT_PICK_LOG','DRAFT_TIER','DRAFT_ROUND','IS_UNDRAFTED','AGE_OCT1'
     ]
 
     # Keep label
