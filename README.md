@@ -71,3 +71,18 @@ python src\data_collection.py --refresh-all-season-stats
 - `predictions/predictions.csv` is the latest-season prediction file.
 - `predictions/roy_predictions_all_seasons.csv` contains historical + current model scores.
 - `outputs/run_info.json` stores training metadata for reproducibility.
+
+## Next Steps: UI Dashboard
+
+The next project phase is a lightweight dashboard to present the ROY race in a clear, visual format.
+
+Suggested first version:
+- Show top 5 / top 10 rookies by season-normalized race odds
+- Include a sortable table (player, team, odds, key features)
+- Add one or two charts (for example: odds bar chart and trend line over refreshes)
+- Add a "last updated" timestamp from the latest pipeline run
+
+Suggested workflow:
+1. Run the data pipeline on a schedule (daily or weekly).
+2. Read `predictions/predictions.csv` as the primary dashboard source.
+3. Render dashboard visuals and publish updates automatically.
