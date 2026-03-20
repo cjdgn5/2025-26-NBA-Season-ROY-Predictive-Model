@@ -60,6 +60,13 @@ def load_json(path: Path):
         return json.load(f)
 
 
+def to_int_set(values) -> Set[int]:
+    """Safely coerce iterable values to an int set, dropping nulls."""
+    series = pd.Series(values, dtype='object')
+    numeric = pd.to_numeric(series, errors='coerce').dropna().astype(int)
+    return set(numeric.tolist())
+
+
 def run_with_retries(callable_fn, operation_label: str):
     """Execute API calls with bounded retries and exponential backoff."""
     last_error = None
@@ -114,7 +121,7 @@ def fetch_rookie_player_ids(season: str, force_refresh: bool = False) -> Set[int
         cache.unlink()
     if cache.exists():
         data = load_json(cache)
-        return {int(r['PLAYER_ID']) for r in data if 'PLAYER_ID' in r}
+        return to_int_set([r.get('PLAYER_ID') for r in data if isinstance(r, dict)])
 
     logger.info('Fetching rookie player list for %s', season)
     errors = []
@@ -134,7 +141,7 @@ def fetch_rookie_player_ids(season: str, force_refresh: bool = False) -> Set[int
             records = df.to_dict(orient='records')
             save_json(records, cache)
             time.sleep(0.6)
-            return {int(pid) for pid in pd.to_numeric(df.get('PLAYER_ID', []), errors='coerce').dropna().astype(int)}
+            return to_int_set(df.get('PLAYER_ID', []))
         except TypeError as e:
             errors.append(str(e))
             continue
@@ -242,7 +249,7 @@ def get_or_build_season_roy_winners(season: str, rookie_player_ids: Set[int]) ->
     cache = RAW_DIR / f'roy_winners_{season}.json'
     if cache.exists():
         data = load_json(cache)
-        winners = set(pd.to_numeric(data.get('winner_player_ids', []), errors='coerce').dropna().astype(int))
+        winners = to_int_set(data.get('winner_player_ids', []))
         logger.info('Loaded season ROY cache for %s (%d winner ids)', season, len(winners))
         return winners
 
