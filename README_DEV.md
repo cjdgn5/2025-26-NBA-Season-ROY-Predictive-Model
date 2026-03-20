@@ -24,7 +24,7 @@ python src\train_model.py
 This saves best model to `outputs/roy_model.pkl` and predictions to `predictions/roy_predictions_all_seasons.csv`.
 
 Notes and data sources:
-- Primary source: `nba_api` (stats.nba.com). Key endpoints used: `LeagueDashPlayerStats`, `PlayerCareerStats`, and `PlayerAwards`.
+- Primary source: `nba_api` (stats.nba.com). Key endpoints used: `LeagueDashPlayerStats`, `CommonPlayerInfo`, and `PlayerAwards`.
 - Scope: seasons 2010-11 through 2024-25 (configurable in `src/data_collection.py`).
 
 Feature choices and justification are in `data_processed/README.md`.
