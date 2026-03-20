@@ -16,6 +16,7 @@ from pathlib import Path
 import time
 import json
 import logging
+import argparse
 from typing import Set
 
 import pandas as pd
@@ -30,6 +31,9 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('data_collection')
+MAX_API_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 1.5
+PROGRESS_LOG_EVERY = 25
 
 def current_season() -> str:
     """Derive the current NBA season string like '2025-26'. Assumes season start Aug/Sept."""
@@ -56,9 +60,35 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def fetch_season_stats(season: str) -> pd.DataFrame:
+def run_with_retries(callable_fn, operation_label: str):
+    """Execute API calls with bounded retries and exponential backoff."""
+    last_error = None
+    for attempt in range(1, MAX_API_RETRIES + 1):
+        try:
+            return callable_fn()
+        except Exception as e:
+            last_error = e
+            if attempt < MAX_API_RETRIES:
+                wait_seconds = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                logger.warning(
+                    'Attempt %d/%d failed for %s: %s. Retrying in %.1fs',
+                    attempt, MAX_API_RETRIES, operation_label, e, wait_seconds
+                )
+                time.sleep(wait_seconds)
+            else:
+                logger.warning(
+                    'All %d attempts failed for %s: %s',
+                    MAX_API_RETRIES, operation_label, e
+                )
+    raise last_error
+
+
+def fetch_season_stats(season: str, force_refresh: bool = False) -> pd.DataFrame:
     """Fetch season player statistics."""
     cache = RAW_DIR / f'leaguedash_{season}.json'
+    if force_refresh and cache.exists():
+        logger.info('Refreshing season stats cache for %s', season)
+        cache.unlink()
     if cache.exists():
         logger.info('Loading cached season stats for %s', season)
         data = load_json(cache)
@@ -73,12 +103,15 @@ def fetch_season_stats(season: str) -> pd.DataFrame:
     return df
 
 
-def fetch_rookie_player_ids(season: str) -> Set[int]:
+def fetch_rookie_player_ids(season: str, force_refresh: bool = False) -> Set[int]:
     """Fetch rookie player IDs for a season in one request.
 
     Uses LeagueDashPlayerStats with a rookie experience filter and caches results.
     """
     cache = RAW_DIR / f'leaguedash_rookies_{season}.json'
+    if force_refresh and cache.exists():
+        logger.info('Refreshing rookie list cache for %s', season)
+        cache.unlink()
     if cache.exists():
         data = load_json(cache)
         return {int(r['PLAYER_ID']) for r in data if 'PLAYER_ID' in r}
@@ -139,8 +172,10 @@ def player_has_roy(player_id: int, season: str) -> bool:
         awards = data.get('awards', [])
     else:
         try:
-            res = playerawards.PlayerAwards(player_id=player_id)
-            df = res.get_data_frames()[0]
+            df = run_with_retries(
+                lambda: playerawards.PlayerAwards(player_id=player_id).get_data_frames()[0],
+                f'PlayerAwards for player_id={player_id}'
+            )
             awards = df.to_dict(orient='records')
             save_json({'awards': awards}, cache)
             time.sleep(0.6)
@@ -167,8 +202,10 @@ def fetch_player_info_cached(player_id: int) -> dict:
 
     info = {'draft_pick': None, 'draft_round': None, 'birthdate': None}
     try:
-        res = commonplayerinfo.CommonPlayerInfo(player_id=player_id)
-        df = res.get_data_frames()[0]
+        df = run_with_retries(
+            lambda: commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_data_frames()[0],
+            f'CommonPlayerInfo for player_id={player_id}'
+        )
         if not df.empty:
             row = df.iloc[0].to_dict()
             draft_number = row.get('DRAFT_NUMBER')
@@ -232,10 +269,16 @@ def get_or_build_season_roy_winners(season: str, rookie_player_ids: Set[int]) ->
 
     # Fallback: targeted fetches only if season cache could not be resolved from existing player caches.
     if not winners and target_season != normalize_season(current_season()):
-        for pid in missing_awards_cache:
+        total_missing = len(missing_awards_cache)
+        for idx, pid in enumerate(missing_awards_cache, start=1):
             if player_has_roy(pid, season):
                 winners.add(int(pid))
                 break
+            if idx % PROGRESS_LOG_EVERY == 0 or idx == total_missing:
+                logger.info(
+                    'Awards fallback fetch progress for %s: %d/%d',
+                    season, idx, total_missing
+                )
 
     save_json(
         {
@@ -250,16 +293,18 @@ def get_or_build_season_roy_winners(season: str, rookie_player_ids: Set[int]) ->
     return winners
 
 
-def collect():
+def collect(refresh_current_season_stats: bool = True, refresh_all_season_stats: bool = False):
     rows = []
+    curr = current_season()
     for season in SEASONS:
-        df = fetch_season_stats(season)
+        force_refresh = refresh_all_season_stats or (refresh_current_season_stats and season == curr)
+        df = fetch_season_stats(season, force_refresh=force_refresh)
         if 'SEASON_EXP' in df.columns:
             rookie_mask = pd.to_numeric(df['SEASON_EXP'], errors='coerce').fillna(-1).astype(int) == 0
             rookie_ids = set(pd.to_numeric(df.loc[rookie_mask, 'PLAYER_ID'], errors='coerce').dropna().astype(int))
             logger.info('Using SEASON_EXP for rookie detection in %s (%d rookies)', season, len(rookie_ids))
         else:
-            rookie_ids = fetch_rookie_player_ids(season)
+            rookie_ids = fetch_rookie_player_ids(season, force_refresh=force_refresh)
             logger.info('Using rookie-filtered endpoint for %s (%d rookies)', season, len(rookie_ids))
 
         # Normalize column names and select useful columns
@@ -284,9 +329,14 @@ def collect():
     rookie_ids_numeric = pd.to_numeric(rookies['PLAYER_ID'], errors='coerce').fillna(-1).astype(int)
     rookies['PLAYER_ID'] = rookie_ids_numeric
     unique_rookie_ids = sorted(set(rookie_ids_numeric.tolist()))
-
-    for pid in unique_rookie_ids:
+    total_rookies = len(unique_rookie_ids)
+    for idx, pid in enumerate(unique_rookie_ids, start=1):
         fetch_player_info_cached(int(pid))
+        if idx % PROGRESS_LOG_EVERY == 0 or idx == total_rookies:
+            logger.info(
+                'Player info cache progress: %d/%d rookies',
+                idx, total_rookies
+            )
 
     for season, season_df in rookies.groupby('SEASON'):
         season_rookie_ids = set(pd.to_numeric(season_df['PLAYER_ID'], errors='coerce').dropna().astype(int))
@@ -301,4 +351,20 @@ def collect():
 
 
 if __name__ == '__main__':
-    collect()
+    parser = argparse.ArgumentParser(description='Collect and label ROY rookie data.')
+    parser.add_argument(
+        '--refresh-current-season-stats',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Refresh cached season stats and rookie list for current season (default: true).',
+    )
+    parser.add_argument(
+        '--refresh-all-season-stats',
+        action='store_true',
+        help='Refresh cached season stats and rookie lists for all seasons.',
+    )
+    args = parser.parse_args()
+    collect(
+        refresh_current_season_stats=args.refresh_current_season_stats,
+        refresh_all_season_stats=args.refresh_all_season_stats,
+    )
