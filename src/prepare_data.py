@@ -5,6 +5,7 @@ Reads `data_processed/rookies_labeled.csv`, computes per-75 possession stats, ha
 and writes `data_processed/roy_dataset.csv` used for modeling.
 """
 from pathlib import Path
+from datetime import date
 import pandas as pd
 import numpy as np
 
@@ -21,12 +22,57 @@ def per75(col, minutes, gp):
     return v
 
 
+def current_season() -> str:
+    """Derive current NBA season string (e.g., '2025-26')."""
+    today = date.today()
+    start_year = today.year if today.month >= 8 else today.year - 1
+    end_year = (start_year + 1) % 100
+    return f"{start_year}-{str(end_year).zfill(2)}"
+
+
+def run_preflight_checks(df: pd.DataFrame):
+    """Validate rookie-labeled input before feature engineering."""
+    required_cols = [
+        'PLAYER_ID', 'PLAYER_NAME', 'SEASON', 'ROY', 'GP', 'MIN',
+        'PTS', 'REB', 'AST', 'STL', 'BLK', 'TOV',
+        'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT', 'FTM', 'FTA', 'FT_PCT',
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f'Preflight failed: missing required columns: {missing}')
+
+    dup_mask = df.duplicated(subset=['PLAYER_ID', 'SEASON'], keep=False)
+    if dup_mask.any():
+        dup_count = int(dup_mask.sum())
+        raise ValueError(f'Preflight failed: found {dup_count} duplicate PLAYER_ID+SEASON rows.')
+
+    roy_series = df['ROY']
+    if roy_series.dtype == bool:
+        roy_numeric = roy_series.astype(int)
+    else:
+        roy_numeric = roy_series.astype(str).str.strip().str.lower().map({'true': 1, 'false': 0})
+        roy_numeric = roy_numeric.fillna(pd.to_numeric(roy_series, errors='coerce')).fillna(0).astype(int)
+
+    current = current_season()
+    completed = df[df['SEASON'].astype(str) != current].copy()
+    completed['ROY_NUMERIC'] = roy_numeric.loc[completed.index]
+    roy_by_season = completed.groupby('SEASON', dropna=False)['ROY_NUMERIC'].sum()
+    bad = roy_by_season[roy_by_season != 1]
+    if not bad.empty:
+        details = ', '.join([f'{season}={int(count)}' for season, count in bad.items()])
+        raise ValueError(
+            'Preflight failed: completed seasons must each have exactly 1 ROY label. '
+            f'Violations: {details}'
+        )
+
+
 def prepare():
     path = PROCESSED_DIR / 'rookies_labeled.csv'
     if not path.exists():
         raise FileNotFoundError(f'{path} not found; run data_collection.py first')
 
     df = pd.read_csv(path)
+    run_preflight_checks(df)
 
     # Basic cleaning
     df['MIN'] = pd.to_numeric(df.get('MIN', 0), errors='coerce').fillna(0)
