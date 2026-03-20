@@ -67,11 +67,11 @@ def prepare():
     # Add minutes per game (playing time trust indicator)
     df['MIN_per_game'] = np.where(df['GP']>0, df['MIN']/df['GP'], 0)
     
-    # Calculate Usage Rate (USG%): percentage of team plays used by player while on court
-    # Simplified as per-75 possession usage actions
+    # Calculate simplified Usage Rate (USG% proxy):
+    # percentage of usage actions per minute over the season.
     df['USG_RATE'] = np.where(
         df['MIN'] > 0,
-        100 * (df['FGA'] + 0.44*df['FTA'] + df['TOV']) / (df['MIN'] / 75),  # per-75 usage actions
+        100 * (df['FGA'] + 0.44*df['FTA'] + df['TOV']) / df['MIN'],
         0
     )
 
