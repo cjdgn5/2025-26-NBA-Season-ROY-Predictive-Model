@@ -20,7 +20,7 @@ from typing import Set
 
 import pandas as pd
 from datetime import date
-from nba_api.stats.endpoints import leaguedashplayerstats, playerawards
+from nba_api.stats.endpoints import leaguedashplayerstats, playerawards, commonplayerinfo
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / 'data_raw'
@@ -159,6 +159,41 @@ def player_has_roy(player_id: int, season: str) -> bool:
     return False
 
 
+def fetch_player_info_cached(player_id: int) -> dict:
+    """Load or fetch player bio info used for feature engineering."""
+    cache = RAW_DIR / f'info_{player_id}.json'
+    if cache.exists():
+        return load_json(cache)
+
+    info = {'draft_pick': None, 'draft_round': None, 'birthdate': None}
+    try:
+        res = commonplayerinfo.CommonPlayerInfo(player_id=player_id)
+        df = res.get_data_frames()[0]
+        if not df.empty:
+            row = df.iloc[0].to_dict()
+            draft_number = row.get('DRAFT_NUMBER')
+            draft_round = row.get('DRAFT_ROUND')
+            birthdate = row.get('BIRTHDATE')
+
+            try:
+                info['draft_pick'] = int(draft_number) if str(draft_number).isdigit() else None
+            except Exception:
+                info['draft_pick'] = None
+
+            try:
+                info['draft_round'] = int(draft_round) if str(draft_round).isdigit() else None
+            except Exception:
+                info['draft_round'] = None
+
+            info['birthdate'] = str(birthdate) if birthdate not in [None, ''] else None
+        save_json(info, cache)
+        time.sleep(0.6)
+    except Exception as e:
+        logger.warning('Failed to fetch player info for %s: %s', player_id, e)
+        save_json(info, cache)
+    return info
+
+
 def get_or_build_season_roy_winners(season: str, rookie_player_ids: Set[int]) -> Set[int]:
     """Return ROY winner IDs for a season with a season-level cache.
 
@@ -248,6 +283,10 @@ def collect():
     rookies['ROY'] = False
     rookie_ids_numeric = pd.to_numeric(rookies['PLAYER_ID'], errors='coerce').fillna(-1).astype(int)
     rookies['PLAYER_ID'] = rookie_ids_numeric
+    unique_rookie_ids = sorted(set(rookie_ids_numeric.tolist()))
+
+    for pid in unique_rookie_ids:
+        fetch_player_info_cached(int(pid))
 
     for season, season_df in rookies.groupby('SEASON'):
         season_rookie_ids = set(pd.to_numeric(season_df['PLAYER_ID'], errors='coerce').dropna().astype(int))

@@ -6,11 +6,13 @@ and writes `data_processed/roy_dataset.csv` used for modeling.
 """
 from pathlib import Path
 from datetime import date
+import json
 import pandas as pd
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = ROOT / 'data_processed'
+RAW_DIR = ROOT / 'data_raw'
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -33,7 +35,7 @@ def current_season() -> str:
 def run_preflight_checks(df: pd.DataFrame):
     """Validate rookie-labeled input before feature engineering."""
     required_cols = [
-        'PLAYER_ID', 'PLAYER_NAME', 'SEASON', 'ROY', 'GP', 'MIN',
+        'PLAYER_ID', 'PLAYER_NAME', 'SEASON', 'TEAM_ID', 'ROY', 'GP', 'MIN', 'W', 'L',
         'PTS', 'REB', 'AST', 'STL', 'BLK', 'TOV',
         'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT', 'FTM', 'FTA', 'FT_PCT',
     ]
@@ -66,6 +68,43 @@ def run_preflight_checks(df: pd.DataFrame):
         )
 
 
+def season_start_year(season_str: str) -> int:
+    try:
+        return int(str(season_str).split('-')[0])
+    except Exception:
+        return -1
+
+
+def normalize_season_str(season_str: str) -> str:
+    s = str(season_str).strip()
+    if len(s) == 9 and s[4] == '-':
+        return s
+    if len(s) == 4 and s.isdigit():
+        start = int(s)
+        return f"{start}-{str((start + 1) % 100).zfill(2)}"
+    return s
+
+
+def age_on_oct1(season_str: str, birthdate: str):
+    if not birthdate:
+        return np.nan
+    birth = pd.to_datetime(birthdate, errors='coerce')
+    if pd.isna(birth):
+        return np.nan
+    start_year = season_start_year(season_str)
+    if start_year < 0:
+        return np.nan
+    ref = pd.Timestamp(year=start_year, month=10, day=1)
+    return max((ref - birth).days / 365.25, 0)
+
+
+def load_json_if_exists(path: Path):
+    if not path.exists():
+        return None
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
 def prepare():
     path = PROCESSED_DIR / 'rookies_labeled.csv'
     if not path.exists():
@@ -75,14 +114,50 @@ def prepare():
     run_preflight_checks(df)
 
     # Basic cleaning
+    df['PLAYER_ID'] = pd.to_numeric(df.get('PLAYER_ID', -1), errors='coerce').fillna(-1).astype(int)
+    df['TEAM_ID'] = pd.to_numeric(df.get('TEAM_ID', -1), errors='coerce').fillna(-1).astype(int)
     df['MIN'] = pd.to_numeric(df.get('MIN', 0), errors='coerce').fillna(0)
     df['GP'] = pd.to_numeric(df.get('GP', 0), errors='coerce').fillna(0)
+    df['W'] = pd.to_numeric(df.get('W', 0), errors='coerce').fillna(0)
+    df['L'] = pd.to_numeric(df.get('L', 0), errors='coerce').fillna(0)
     numeric_cols = ['PTS','REB','AST','STL','BLK','TOV','FGM','FGA','FG_PCT','FG3M','FG3A','FG3_PCT','FTM','FTA','FT_PCT']
     for c in numeric_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         else:
             df[c] = 0
+
+    # Team success context
+    df['TEAM_GAMES'] = df['W'] + df['L']
+    df['TEAM_WIN_PCT'] = np.where(df['TEAM_GAMES'] > 0, df['W'] / df['TEAM_GAMES'], 0)
+    df['GAMES_PLAYED_PCT'] = 0.0
+
+    # Rookie role/share context: share of team production in season totals.
+    raw_path = PROCESSED_DIR / 'raw_season_stats_all_seasons.csv'
+    if not raw_path.exists():
+        raise FileNotFoundError(f'{raw_path} not found; run data_collection.py first')
+    raw_df = pd.read_csv(raw_path, usecols=['SEASON', 'TEAM_ID', 'MIN', 'PTS', 'GP'])
+    raw_df['TEAM_ID'] = pd.to_numeric(raw_df.get('TEAM_ID', -1), errors='coerce').fillna(-1).astype(int)
+    raw_df['MIN'] = pd.to_numeric(raw_df.get('MIN', 0), errors='coerce').fillna(0)
+    raw_df['PTS'] = pd.to_numeric(raw_df.get('PTS', 0), errors='coerce').fillna(0)
+    raw_df['GP'] = pd.to_numeric(raw_df.get('GP', 0), errors='coerce').fillna(0)
+    team_totals = (
+        raw_df.groupby(['SEASON', 'TEAM_ID'], as_index=False)[['MIN', 'PTS']]
+        .sum()
+        .rename(columns={'MIN': 'TEAM_TOTAL_MIN', 'PTS': 'TEAM_TOTAL_PTS'})
+    )
+    df = df.merge(team_totals, on=['SEASON', 'TEAM_ID'], how='left')
+    df['TEAM_TOTAL_MIN'] = pd.to_numeric(df['TEAM_TOTAL_MIN'], errors='coerce').fillna(0)
+    df['TEAM_TOTAL_PTS'] = pd.to_numeric(df['TEAM_TOTAL_PTS'], errors='coerce').fillna(0)
+    df['MINUTES_SHARE'] = np.where(df['TEAM_TOTAL_MIN'] > 0, df['MIN'] / df['TEAM_TOTAL_MIN'], 0)
+    df['POINTS_SHARE'] = np.where(df['TEAM_TOTAL_PTS'] > 0, df['PTS'] / df['TEAM_TOTAL_PTS'], 0)
+
+    # Availability/stability context normalized by season length.
+    season_max_games = raw_df.groupby('SEASON', as_index=False)['GP'].max().rename(columns={'GP': 'SEASON_MAX_GP'})
+    df = df.merge(season_max_games, on='SEASON', how='left')
+    df['SEASON_MAX_GP'] = pd.to_numeric(df['SEASON_MAX_GP'], errors='coerce').fillna(82)
+    df['GAMES_PLAYED_PCT'] = np.where(df['SEASON_MAX_GP'] > 0, df['GP'] / df['SEASON_MAX_GP'], 0)
+    df['GAMES_PLAYED_PCT'] = df['GAMES_PLAYED_PCT'].clip(lower=0, upper=1)
 
     # Compute per-75 possession features (better accounts for pace than per-36)
     raw_pts75 = per75(df['PTS'], df['MIN'], df['GP'])
@@ -121,8 +196,62 @@ def prepare():
         0
     )
 
+    # Draft and age context from cached player info.
+    player_ids = sorted(set(df['PLAYER_ID'].tolist()))
+    player_info = {}
+    for pid in player_ids:
+        info = load_json_if_exists(RAW_DIR / f'info_{pid}.json') or {}
+        player_info[pid] = {
+            'draft_pick': info.get('draft_pick'),
+            'draft_round': info.get('draft_round'),
+            'birthdate': info.get('birthdate'),
+        }
+    df['DRAFT_PICK_RAW'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('draft_pick'))
+    df['DRAFT_ROUND_RAW'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('draft_round'))
+    df['IS_UNDRAFTED'] = df['DRAFT_PICK_RAW'].isna().astype(int)
+    df['DRAFT_PICK'] = pd.to_numeric(df['DRAFT_PICK_RAW'], errors='coerce').fillna(61)
+    df['DRAFT_ROUND'] = pd.to_numeric(df['DRAFT_ROUND_RAW'], errors='coerce')
+    df['DRAFT_ROUND'] = np.where(
+        df['DRAFT_ROUND'].notna(),
+        df['DRAFT_ROUND'],
+        np.where(df['DRAFT_PICK'] <= 30, 1, np.where(df['DRAFT_PICK'] <= 60, 2, 3))
+    )
+    df['AGE_OCT1'] = [
+        age_on_oct1(season, player_info.get(pid, {}).get('birthdate'))
+        for pid, season in zip(df['PLAYER_ID'], df['SEASON'])
+    ]
+    df['AGE_OCT1'] = pd.to_numeric(df['AGE_OCT1'], errors='coerce')
+    if df['AGE_OCT1'].notna().any():
+        df['AGE_OCT1'] = df['AGE_OCT1'].fillna(df['AGE_OCT1'].median())
+    else:
+        df['AGE_OCT1'] = df['AGE_OCT1'].fillna(20.0)
+
+    # Award buzz proxy from cached awards.
+    awards_cache = {}
+    def all_rookie_flags(pid: int, season: str):
+        if pid not in awards_cache:
+            data = load_json_if_exists(RAW_DIR / f'awards_{pid}.json') or {}
+            awards_cache[pid] = data.get('awards', [])
+        all_rookie = 0
+        all_rookie_first = 0
+        target_season = normalize_season_str(season)
+        for award in awards_cache[pid]:
+            name = award.get('DESCRIPTION') or award.get('AWARD_NAME') or award.get('AWARD') or ''
+            season_award = normalize_season_str(award.get('SEASON') or award.get('SEASON_ID') or '')
+            if str(name).find('All-Rookie Team') >= 0 and str(season_award) == target_season:
+                all_rookie = 1
+                if str(award.get('ALL_NBA_TEAM_NUMBER', '')).strip() == '1':
+                    all_rookie_first = 1
+        return all_rookie, all_rookie_first
+
+    flags = [all_rookie_flags(pid, season) for pid, season in zip(df['PLAYER_ID'], df['SEASON'])]
+    df['ALL_ROOKIE_TEAM_FLAG'] = [f[0] for f in flags]
+    df['ALL_ROOKIE_FIRST_TEAM_FLAG'] = [f[1] for f in flags]
+
     features = [
         'GP','MIN',
+        'TEAM_GAMES','TEAM_WIN_PCT','GAMES_PLAYED_PCT',
+        'MINUTES_SHARE','POINTS_SHARE',
         'MIN_per_game',
         'PTS_per75',
         'REB_per75',
@@ -132,7 +261,9 @@ def prepare():
         'TS','FG_PCT',
         'FG3_RATE',
         'FT_PCT',
-        'TOV','USG_RATE'
+        'TOV','USG_RATE',
+        'DRAFT_PICK','DRAFT_ROUND','IS_UNDRAFTED','AGE_OCT1',
+        'ALL_ROOKIE_TEAM_FLAG','ALL_ROOKIE_FIRST_TEAM_FLAG'
     ]
 
     # Keep label
