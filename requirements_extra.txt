@@ -1,8 +1,7 @@
-# Additional packages recommended for the ROY modeling pipeline
-xgboost
-joblib
+# Additional packages for the ROY modeling pipeline
+xgboost==3.1.0
+joblib==1.5.3
 
-# Note: these are not yet merged into `requirements.txt` due to an automated edit issue.
-# To install, run (Windows cmd):
+# Install order (Windows cmd):
 # pip install -r requirements.txt
 # pip install -r requirements_extra.txt
