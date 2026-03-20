@@ -17,7 +17,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from scipy.special import softmax
 from data_collection import current_season
 
 try:
@@ -53,14 +52,20 @@ def get_git_commit(root: Path) -> str:
     except Exception:
         return 'unknown'
 
-def apply_per_season_softmax(df_with_probs, prob_col='prob_roy'):
-    """Apply softmax normalization within each season so probabilities sum to 1."""
+def apply_per_season_race_odds(df_with_probs, prob_col='prob_roy_raw', out_col='race_odds'):
+    """Normalize probabilities within each season so odds sum to 1."""
     df_normalized = df_with_probs.copy()
+    df_normalized[out_col] = 0.0
     for season in df_normalized['SEASON'].unique():
         mask = df_normalized['SEASON'] == season
-        season_probs = df_normalized.loc[mask, prob_col].values
-        normalized_probs = softmax(season_probs)
-        df_normalized.loc[mask, prob_col] = normalized_probs
+        season_probs = pd.to_numeric(df_normalized.loc[mask, prob_col], errors='coerce').fillna(0).clip(lower=0)
+        total = float(season_probs.sum())
+        if total > 0:
+            df_normalized.loc[mask, out_col] = season_probs / total
+        else:
+            # Defensive fallback only for degenerate cases where all probs are zero.
+            count = int(mask.sum())
+            df_normalized.loc[mask, out_col] = (1.0 / count) if count > 0 else 0.0
     return df_normalized
 
 
@@ -147,10 +152,11 @@ def train():
     # Generate predictions on ALL data (including current season and low-minute players)
     probs = best_model.predict_proba(X_all)[:,1]
     df_preds = df[['PLAYER_ID','PLAYER_NAME','SEASON']].copy()
-    df_preds['prob_roy'] = probs
+    df_preds['prob_roy_raw'] = probs
+    df_preds = apply_per_season_race_odds(df_preds, prob_col='prob_roy_raw', out_col='race_odds')
     
     # Sort by season and probability (no softmax normalization to preserve model's confidence spread)
-    df_preds = df_preds.sort_values(['SEASON','prob_roy'], ascending=[False, False])
+    df_preds = df_preds.sort_values(['SEASON','race_odds'], ascending=[False, False])
     pred_path = PRED / 'roy_predictions_all_seasons.csv'
     df_preds.to_csv(pred_path, index=False)
     print('Saved predictions to', pred_path)
@@ -170,7 +176,7 @@ def train():
     df_preds['season_start'] = df_preds['SEASON'].apply(season_start_year)
     latest_start = df_preds['season_start'].max()
     latest_season_df = df_preds[df_preds['season_start'] == latest_start].copy()
-    two_col = latest_season_df[['PLAYER_NAME', 'prob_roy']].rename(columns={'PLAYER_NAME': 'player_name', 'prob_roy': 'probability'})
+    two_col = latest_season_df[['PLAYER_NAME', 'race_odds']].rename(columns={'PLAYER_NAME': 'player_name', 'race_odds': 'probability'})
     two_col['probability'] = two_col['probability'].clip(0,1).round(6)
     two_col_path = PRED / 'predictions.csv'
     two_col.to_csv(two_col_path, index=False)
@@ -188,6 +194,7 @@ def train():
         'training_negative_labels': int((y_train == 0).sum()),
         'selected_model': model_name,
         'selected_model_cv_auc_mean': float(best_score),
+        'probability_presentation': 'season_normalized_race_odds',
         'model_cv': model_cv_results,
         'artifacts': {
             'model': str(out_path),
