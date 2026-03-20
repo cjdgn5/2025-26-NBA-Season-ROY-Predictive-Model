@@ -309,7 +309,7 @@ def collect(refresh_current_season_stats: bool = True, refresh_all_season_stats:
 
         # Normalize column names and select useful columns
         cols = [
-            'PLAYER_ID','PLAYER_NAME','TEAM_ID','TEAM_ABBREVIATION','GP','W','L','MIN','FGM','FGA',
+            'PLAYER_ID','PLAYER_NAME','TEAM_ID','TEAM_ABBREVIATION','GP','GS','W','L','MIN','FGM','FGA',
             'FG_PCT','FG3M','FG3A','FG3_PCT','FTM','FTA','FT_PCT','OREB','DREB','REB','AST','STL','BLK','TOV','PF','PTS'
         ]
         present_cols = [c for c in cols if c in df.columns]
