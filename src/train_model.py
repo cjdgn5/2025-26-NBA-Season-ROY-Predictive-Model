@@ -7,6 +7,9 @@ Train predictive models for ROY.
 - Saves best model to `outputs/roy_model.pkl` and predictions to `predictions/`.
 """
 from pathlib import Path
+from datetime import datetime, timezone
+import json
+import subprocess
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import GroupKFold, cross_val_score
@@ -34,6 +37,21 @@ PRED.mkdir(parents=True, exist_ok=True)
 
 # Minimum minutes threshold to reduce noise from low-sample players
 MIN_THRESHOLD = 150
+
+
+def get_git_commit(root: Path) -> str:
+    """Return current git commit hash if available."""
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return 'unknown'
 
 def apply_per_season_softmax(df_with_probs, prob_col='prob_roy'):
     """Apply softmax normalization within each season so probabilities sum to 1."""
@@ -77,6 +95,13 @@ def train():
     aucs = cross_val_score(lr_pipeline, X_train, y_train, groups=groups_train, cv=cv, scoring='roc_auc')
     print('LogisticRegression CV AUCs:', aucs, 'mean:', np.mean(aucs))
     print(f'Training on {len(df_train)} rookies (MIN >= {MIN_THRESHOLD}, known ROY only)')
+    model_cv_results = {
+        'logistic_regression': {
+            'cv_auc_scores': aucs.tolist(),
+            'cv_auc_mean': float(np.mean(aucs)),
+            'cv_auc_std': float(np.std(aucs)),
+        }
+    }
     
     # Fit final model on all training data
     lr_pipeline.fit(X_train, y_train)
@@ -104,6 +129,11 @@ def train():
         ])
         aucs_x = cross_val_score(xgb_pipeline, X_train, y_train, groups=groups_train, cv=cv, scoring='roc_auc')
         print('XGBoost CV AUCs:', aucs_x, 'mean:', np.mean(aucs_x))
+        model_cv_results['xgboost'] = {
+            'cv_auc_scores': aucs_x.tolist(),
+            'cv_auc_mean': float(np.mean(aucs_x)),
+            'cv_auc_std': float(np.std(aucs_x)),
+        }
         xgb_pipeline.fit(X_train, y_train)
         if np.mean(aucs_x) > best_score:
             best_model = xgb_pipeline
@@ -145,6 +175,30 @@ def train():
     two_col_path = PRED / 'predictions.csv'
     two_col.to_csv(two_col_path, index=False)
     print('Saved two-column predictions to', two_col_path)
+
+    run_info = {
+        'run_timestamp_utc': datetime.now(timezone.utc).isoformat(),
+        'git_commit': get_git_commit(ROOT),
+        'current_season': curr_season,
+        'seasons_in_dataset': sorted(df['SEASON'].dropna().astype(str).unique().tolist()),
+        'seasons_in_training': sorted(df_train['SEASON'].dropna().astype(str).unique().tolist()),
+        'min_threshold': MIN_THRESHOLD,
+        'training_rows': int(len(df_train)),
+        'training_positive_labels': int((y_train == 1).sum()),
+        'training_negative_labels': int((y_train == 0).sum()),
+        'selected_model': model_name,
+        'selected_model_cv_auc_mean': float(best_score),
+        'model_cv': model_cv_results,
+        'artifacts': {
+            'model': str(out_path),
+            'predictions_all_seasons': str(pred_path),
+            'predictions_latest': str(two_col_path),
+        },
+    }
+    run_info_path = OUTPUTS / 'run_info.json'
+    with open(run_info_path, 'w', encoding='utf-8') as f:
+        json.dump(run_info, f, indent=2)
+    print('Saved run metadata to', run_info_path)
 
 
 if __name__ == '__main__':
