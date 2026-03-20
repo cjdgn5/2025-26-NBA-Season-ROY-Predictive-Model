@@ -159,6 +159,62 @@ def player_has_roy(player_id: int, season: str) -> bool:
     return False
 
 
+def get_or_build_season_roy_winners(season: str, rookie_player_ids: Set[int]) -> Set[int]:
+    """Return ROY winner IDs for a season with a season-level cache.
+
+    Strategy:
+    1) Use `roy_winners_{season}.json` if available.
+    2) Otherwise scan existing per-player `awards_{player_id}.json` caches for rookies.
+    3) If still unresolved and season is not current, fallback to targeted player award fetches.
+    """
+    cache = RAW_DIR / f'roy_winners_{season}.json'
+    if cache.exists():
+        data = load_json(cache)
+        winners = set(pd.to_numeric(data.get('winner_player_ids', []), errors='coerce').dropna().astype(int))
+        logger.info('Loaded season ROY cache for %s (%d winner ids)', season, len(winners))
+        return winners
+
+    winners = set()
+    missing_awards_cache = []
+    target_season = normalize_season(season)
+
+    for pid in sorted(rookie_player_ids):
+        awards_cache = RAW_DIR / f'awards_{pid}.json'
+        if not awards_cache.exists():
+            missing_awards_cache.append(pid)
+            continue
+
+        data = load_json(awards_cache)
+        awards = data.get('awards', [])
+        for award in awards:
+            name = award.get('DESCRIPTION') or award.get('AWARD_NAME') or award.get('AWARD') or ''
+            season_award = award.get('SEASON') or award.get('SEASON_ID') or ''
+            if 'Rookie of the Year' in str(name) and normalize_season(season_award) == target_season:
+                winners.add(int(pid))
+                break
+        if winners:
+            break
+
+    # Fallback: targeted fetches only if season cache could not be resolved from existing player caches.
+    if not winners and target_season != normalize_season(current_season()):
+        for pid in missing_awards_cache:
+            if player_has_roy(pid, season):
+                winners.add(int(pid))
+                break
+
+    save_json(
+        {
+            'season': season,
+            'winner_player_ids': sorted(winners),
+            'rookie_player_count': len(rookie_player_ids),
+            'missing_awards_cache_count': len(missing_awards_cache),
+        },
+        cache,
+    )
+    logger.info('Built season ROY cache for %s (%d winner ids)', season, len(winners))
+    return winners
+
+
 def collect():
     rows = []
     for season in SEASONS:
@@ -190,14 +246,15 @@ def collect():
     # Filter rookies only and attempt to label ROY winners
     rookies = combined[combined['ROOKIE'] == True].copy()
     rookies['ROY'] = False
-    for idx, r in rookies.iterrows():
-        pid = int(r['PLAYER_ID'])
-        season = r['SEASON']
-        try:
-            if player_has_roy(pid, season):
-                rookies.at[idx, 'ROY'] = True
-        except Exception:
-            pass
+    rookie_ids_numeric = pd.to_numeric(rookies['PLAYER_ID'], errors='coerce').fillna(-1).astype(int)
+    rookies['PLAYER_ID'] = rookie_ids_numeric
+
+    for season, season_df in rookies.groupby('SEASON'):
+        season_rookie_ids = set(pd.to_numeric(season_df['PLAYER_ID'], errors='coerce').dropna().astype(int))
+        winners = get_or_build_season_roy_winners(season, season_rookie_ids)
+        logger.info('Applying ROY labels for %s (rookies=%d, winners=%d)', season, len(season_rookie_ids), len(winners))
+        mask = rookies['SEASON'] == season
+        rookies.loc[mask, 'ROY'] = rookies.loc[mask, 'PLAYER_ID'].isin(winners)
 
     rookies_out = PROCESSED_DIR / 'rookies_labeled.csv'
     rookies.to_csv(rookies_out, index=False)
