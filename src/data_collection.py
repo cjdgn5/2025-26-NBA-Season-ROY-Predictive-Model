@@ -2,8 +2,8 @@
 Data collection using nba_api.
 
 This script fetches per-season player stats using `leaguedashplayerstats` and determines rookies
-by checking each player's first season via `playercareerstats`. It also gathers ROY awards by
-checking each player's awards via `playerawards` (if available) and creates a labeled CSV
+using season-level rookie filtering (`player_experience`/`SEASON_EXP`). It also gathers ROY awards
+by checking each player's awards via `playerawards` (if available) and creates a labeled CSV
 for rookies across seasons.
 
 Notes:
@@ -16,11 +16,11 @@ from pathlib import Path
 import time
 import json
 import logging
-from typing import List
+from typing import Set
 
 import pandas as pd
 from datetime import date
-from nba_api.stats.endpoints import leaguedashplayerstats, playercareerstats, playerawards
+from nba_api.stats.endpoints import leaguedashplayerstats, playerawards
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / 'data_raw'
@@ -73,6 +73,46 @@ def fetch_season_stats(season: str) -> pd.DataFrame:
     return df
 
 
+def fetch_rookie_player_ids(season: str) -> Set[int]:
+    """Fetch rookie player IDs for a season in one request.
+
+    Uses LeagueDashPlayerStats with a rookie experience filter and caches results.
+    """
+    cache = RAW_DIR / f'leaguedash_rookies_{season}.json'
+    if cache.exists():
+        data = load_json(cache)
+        return {int(r['PLAYER_ID']) for r in data if 'PLAYER_ID' in r}
+
+    logger.info('Fetching rookie player list for %s', season)
+    errors = []
+    attempts = [
+        {'player_experience_nullable': 'Rookie'},
+        {'player_experience': 'Rookie'},
+    ]
+
+    for extra_kwargs in attempts:
+        try:
+            res = leaguedashplayerstats.LeagueDashPlayerStats(
+                season=season,
+                season_type_all_star='Regular Season',
+                **extra_kwargs,
+            )
+            df = res.get_data_frames()[0]
+            records = df.to_dict(orient='records')
+            save_json(records, cache)
+            time.sleep(0.6)
+            return {int(pid) for pid in pd.to_numeric(df.get('PLAYER_ID', []), errors='coerce').dropna().astype(int)}
+        except TypeError as e:
+            errors.append(str(e))
+            continue
+        except Exception as e:
+            errors.append(str(e))
+            continue
+
+    logger.warning('Failed rookie list fetch for %s; returning empty set. Errors: %s', season, errors)
+    return set()
+
+
 def normalize_season(season_str: str) -> str:
     """Normalize season strings so comparisons are reliable.
     Accepts formats like '2011-12' or '2011'. Converts '2011' -> '2011-12'.
@@ -88,31 +128,6 @@ def normalize_season(season_str: str) -> str:
         end = (start + 1) % 100
         return f"{start}-{str(end).zfill(2)}"
     return s
-
-
-def player_first_season(player_id: int) -> str:
-    """Determine player's rookie season using PlayerCareerStats.
-    Uses the earliest unique season ID after sorting by start year.
-    Cached result stored in data_raw/.
-    """
-    cache = RAW_DIR / f'career_{player_id}.json'
-    if cache.exists():
-        data = load_json(cache)
-        return data.get('rookie_season')
-
-    try:
-        res = playercareerstats.PlayerCareerStats(player_id=player_id)
-        df = res.get_data_frames()[0]
-        seasons_list = [str(s) for s in df.get('SEASON_ID', [])]
-        # Deduplicate and sort by numeric starting year
-        unique = sorted(set(seasons_list), key=lambda s: int(str(s).split('-')[0])) if seasons_list else []
-        rookie = unique[0] if unique else None
-        save_json({'rookie_season': rookie, 'seasons': unique}, cache)
-        time.sleep(0.6)
-        return rookie
-    except Exception as e:
-        logger.warning('Failed to fetch career for %s: %s', player_id, e)
-        return None
 
 
 def player_has_roy(player_id: int, season: str) -> bool:
@@ -148,6 +163,14 @@ def collect():
     rows = []
     for season in SEASONS:
         df = fetch_season_stats(season)
+        if 'SEASON_EXP' in df.columns:
+            rookie_mask = pd.to_numeric(df['SEASON_EXP'], errors='coerce').fillna(-1).astype(int) == 0
+            rookie_ids = set(pd.to_numeric(df.loc[rookie_mask, 'PLAYER_ID'], errors='coerce').dropna().astype(int))
+            logger.info('Using SEASON_EXP for rookie detection in %s (%d rookies)', season, len(rookie_ids))
+        else:
+            rookie_ids = fetch_rookie_player_ids(season)
+            logger.info('Using rookie-filtered endpoint for %s (%d rookies)', season, len(rookie_ids))
+
         # Normalize column names and select useful columns
         cols = [
             'PLAYER_ID','PLAYER_NAME','TEAM_ID','TEAM_ABBREVIATION','GP','W','L','MIN','FGM','FGA',
@@ -156,13 +179,8 @@ def collect():
         present_cols = [c for c in cols if c in df.columns]
         df_sub = df[present_cols].copy()
         df_sub['SEASON'] = season
-
-        # Determine rookie flag by checking career first season
-        for _, r in df_sub.iterrows():
-            player_id = int(r['PLAYER_ID'])
-            rookie_season = player_first_season(player_id)
-            is_rookie = (rookie_season == season)
-            rows.append({**r.to_dict(), 'ROOKIE': is_rookie})
+        df_sub['ROOKIE'] = pd.to_numeric(df_sub['PLAYER_ID'], errors='coerce').fillna(-1).astype(int).isin(rookie_ids)
+        rows.extend(df_sub.to_dict(orient='records'))
 
     combined = pd.DataFrame(rows)
     out_path = PROCESSED_DIR / 'raw_season_stats_all_seasons.csv'
