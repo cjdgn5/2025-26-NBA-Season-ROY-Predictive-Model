@@ -210,4 +210,6 @@ __marimo__/
 data_raw/
 data_processed/*.csv
 outputs/
-predictions/
+predictions/*
+!predictions/
+!predictions/predictions.csv
