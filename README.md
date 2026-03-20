@@ -63,17 +63,17 @@ Primary source: `nba_api` (stats.nba.com), notably:
 
 1. Install dependencies
 
-```bash
+```cmd
 pip install -r requirements.txt
 pip install -r requirements_extra.txt
 ```
 
 2. Run pipeline
 
-```bash
-python src/data_collection.py
-python src/prepare_data.py
-python src/train_model.py
+```cmd
+python src\data_collection.py
+python src\prepare_data.py
+python src\train_model.py
 ```
 
 ## Notes
