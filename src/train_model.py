@@ -36,6 +36,7 @@ PRED.mkdir(parents=True, exist_ok=True)
 
 # Minimum minutes threshold to reduce noise from low-sample players
 MIN_THRESHOLD = 150
+RACE_ODDS_TOLERANCE = 1e-3
 
 
 def get_git_commit(root: Path) -> str:
@@ -51,6 +52,19 @@ def get_git_commit(root: Path) -> str:
         return result.stdout.strip()
     except Exception:
         return 'unknown'
+
+
+def iso_utc_now() -> str:
+    """Return current UTC timestamp in ISO-8601 `Z` format (seconds precision)."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+
+def build_run_id(run_timestamp_utc: str, git_commit: str) -> str:
+    """Build traceable run identifier from UTC timestamp and short git commit."""
+    ts_part = run_timestamp_utc.replace('-', '').replace(':', '').replace('T', '_').replace('Z', 'Z')
+    short_commit = (git_commit[:7] if git_commit and git_commit != 'unknown' else 'unknown')
+    return f'{ts_part}_{short_commit}'
+
 
 def apply_per_season_race_odds(df_with_probs, prob_col='prob_roy_raw', out_col='race_odds'):
     """Normalize probabilities within each season so odds sum to 1."""
@@ -145,23 +159,32 @@ def train():
             best_score = np.mean(aucs_x)
             model_name = 'xgboost'
 
+    run_timestamp_utc = iso_utc_now()
+    git_commit = get_git_commit(ROOT)
+    run_id = build_run_id(run_timestamp_utc, git_commit)
+
     out_path = OUTPUTS / 'roy_model.pkl'
     joblib.dump({'model': best_model, 'features': X_all.columns.tolist()}, out_path)
     print('Saved best model', model_name, 'to', out_path)
 
     # Generate predictions on ALL data (including current season and low-minute players)
     probs = best_model.predict_proba(X_all)[:,1]
-    df_preds = df[['PLAYER_ID','PLAYER_NAME','SEASON']].copy()
+    df_preds = df.drop(columns=['label']).copy()
     df_preds['prob_roy_raw'] = probs
     df_preds = apply_per_season_race_odds(df_preds, prob_col='prob_roy_raw', out_col='race_odds')
+    df_preds['rank'] = (
+        df_preds.groupby('SEASON')['race_odds']
+        .rank(method='min', ascending=False)
+        .astype(int)
+    )
+    df_preds['run_id'] = run_id
+    df_preds['run_timestamp_utc'] = run_timestamp_utc
+    df_preds['git_commit'] = git_commit
     
-    # Sort by season and probability (no softmax normalization to preserve model's confidence spread)
+    # Sort by season and race odds.
     df_preds = df_preds.sort_values(['SEASON','race_odds'], ascending=[False, False])
-    pred_path = PRED / 'roy_predictions_all_seasons.csv'
-    df_preds.to_csv(pred_path, index=False)
-    print('Saved predictions to', pred_path)
 
-    # Produce the required two-column `predictions.csv` for the latest season
+    # Identify latest season rows.
     def season_start_year(season_str: str):
         if not isinstance(season_str, str):
             return -1
@@ -176,15 +199,60 @@ def train():
     df_preds['season_start'] = df_preds['SEASON'].apply(season_start_year)
     latest_start = df_preds['season_start'].max()
     latest_season_df = df_preds[df_preds['season_start'] == latest_start].copy()
+
+    # Validate latest-season race odds before promoting outputs as latest.
+    latest_odds_sum = float(latest_season_df['race_odds'].sum())
+    odds_sum_check_passed = abs(latest_odds_sum - 1.0) <= RACE_ODDS_TOLERANCE
+    if latest_season_df.empty:
+        raise ValueError('No latest-season rows found; cannot export predictions.')
+    if not odds_sum_check_passed:
+        raise ValueError(
+            f'Race odds sum check failed for latest season: sum={latest_odds_sum:.6f}, '
+            f'tolerance={RACE_ODDS_TOLERANCE}.'
+        )
+
+    # Remove helper column before export.
+    df_preds = df_preds.drop(columns=['season_start'])
+    latest_season_df = latest_season_df.drop(columns=['season_start'])
+
+    # Write latest-pointer exports.
+    pred_path = PRED / 'roy_predictions_all_seasons.csv'
+    df_preds.to_csv(pred_path, index=False)
+    print('Saved predictions to', pred_path)
+
+    latest_path = PRED / 'predictions.csv'
+    latest_season_df = latest_season_df.sort_values('race_odds', ascending=False)
+    latest_season_df.to_csv(latest_path, index=False)
+    print('Saved latest-season predictions to', latest_path)
+
+    # Backward-compatible two-column output for integrations that still expect it.
     two_col = latest_season_df[['PLAYER_NAME', 'race_odds']].rename(columns={'PLAYER_NAME': 'player_name', 'race_odds': 'probability'})
     two_col['probability'] = two_col['probability'].clip(0,1).round(6)
-    two_col_path = PRED / 'predictions.csv'
+    two_col_path = PRED / 'predictions_two_col.csv'
     two_col.to_csv(two_col_path, index=False)
     print('Saved two-column predictions to', two_col_path)
 
+    # Immutable per-run snapshot exports for trends/history.
+    pred_history_dir = PRED / 'history' / run_id
+    outputs_history_dir = OUTPUTS / 'history' / run_id
+    pred_history_dir.mkdir(parents=True, exist_ok=True)
+    outputs_history_dir.mkdir(parents=True, exist_ok=True)
+
+    history_all_path = pred_history_dir / 'roy_predictions_all_seasons.csv'
+    history_latest_path = pred_history_dir / 'predictions.csv'
+    history_leaderboard_path = pred_history_dir / 'leaderboard_current_season.csv'
+    history_two_col_path = pred_history_dir / 'predictions_two_col.csv'
+
+    df_preds.to_csv(history_all_path, index=False)
+    latest_season_df.to_csv(history_latest_path, index=False)
+    latest_season_df.to_csv(history_leaderboard_path, index=False)
+    two_col.to_csv(history_two_col_path, index=False)
+    print('Saved prediction snapshots to', pred_history_dir)
+
     run_info = {
-        'run_timestamp_utc': datetime.now(timezone.utc).isoformat(),
-        'git_commit': get_git_commit(ROOT),
+        'run_id': run_id,
+        'run_timestamp_utc': run_timestamp_utc,
+        'git_commit': git_commit,
         'current_season': curr_season,
         'seasons_in_dataset': sorted(df['SEASON'].dropna().astype(str).unique().tolist()),
         'seasons_in_training': sorted(df_train['SEASON'].dropna().astype(str).unique().tolist()),
@@ -195,17 +263,27 @@ def train():
         'selected_model': model_name,
         'selected_model_cv_auc_mean': float(best_score),
         'probability_presentation': 'season_normalized_race_odds',
+        'latest_season_odds_sum': latest_odds_sum,
+        'latest_season_odds_sum_tolerance': RACE_ODDS_TOLERANCE,
+        'odds_sum_check_passed': odds_sum_check_passed,
         'model_cv': model_cv_results,
         'artifacts': {
             'model': str(out_path),
             'predictions_all_seasons': str(pred_path),
-            'predictions_latest': str(two_col_path),
+            'predictions_latest': str(latest_path),
+            'predictions_latest_two_col': str(two_col_path),
+            'predictions_history_dir': str(pred_history_dir),
         },
     }
     run_info_path = OUTPUTS / 'run_info.json'
     with open(run_info_path, 'w', encoding='utf-8') as f:
         json.dump(run_info, f, indent=2)
     print('Saved run metadata to', run_info_path)
+
+    run_info_history_path = outputs_history_dir / 'run_info.json'
+    with open(run_info_history_path, 'w', encoding='utf-8') as f:
+        json.dump(run_info, f, indent=2)
+    print('Saved run metadata snapshot to', run_info_history_path)
 
 
 if __name__ == '__main__':

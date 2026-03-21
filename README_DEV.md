@@ -30,8 +30,11 @@ python src\train_model.py
 3. `python src\train_model.py`
 - `outputs/roy_model.pkl`
 - `outputs/run_info.json`
+- `outputs/history/<run_id>/run_info.json`
 - `predictions/roy_predictions_all_seasons.csv`
-- `predictions/predictions.csv` (latest season)
+- `predictions/predictions.csv` (latest season, rich fields + run traceability)
+- `predictions/predictions_two_col.csv` (legacy 2-column format)
+- `predictions/history/<run_id>/...` (immutable per-run snapshots)
 
 ## Refresh Options
 
@@ -51,6 +54,7 @@ python src\data_collection.py --refresh-all-season-stats
 
 - Prediction presentation uses season-normalized race odds.
 - Raw model probability is still saved (`prob_roy_raw`) for analysis.
+- `run_id` and `run_timestamp_utc` are attached to prediction exports for traceability.
 - Final UI-facing output should use `predictions/predictions.csv`.
 
 ## Troubleshooting
