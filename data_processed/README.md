@@ -1,18 +1,36 @@
-This folder contains processed datasets for the ROY model pipeline.
+This folder contains processed datasets used by the ROY pipeline.
 
-Files:
-- `raw_season_stats_all_seasons.csv`: combined per-season player stats for seasons collected.
-- `rookies_labeled.csv`: subset of the above filtered to rookies with a `ROY` boolean label where available.
-- `roy_dataset.csv`: final modeling dataset with engineered features and `label` column (1=ROY, 0=not).
+## Files
 
-Data sources and notes:
-- Primary data source: `nba_api` (stats.nba.com endpoints such as `leaguedashplayerstats`, `playercareerstats`, and `playerawards`).
-- Scope: seasons from 2010-11 through 2024-25. This range provides a balance between historical depth and relevance to modern playstyles.
+- `raw_season_stats_all_seasons.csv`  
+Full season-level stats pulled from collection step.
 
-Feature choices and justification:
-- Per-36 performance metrics (`PTS_per36`, `REB_per36`, `AST_per36`, `STL_per36`, `BLK_per36`): normalize workload differences and focus on per-minute production.
-- Shooting efficiency (`TS`, `FG_PCT`, `FG3_RATE`, `FT_PCT`): efficiency often distinguishes award-caliber rookies.
-- Volume measures (`GP`, `MIN`): playing time availability is important for accumulating counting stats and visibility.
-- Turnovers (`TOV`): indicates ball control and decision-making, often considered in voting.
+- `rookies_labeled.csv`  
+Rookie-only rows with ROY labeling.
 
-Preprocessing steps are implemented in `src/prepare_data.py`.
+- `roy_dataset.csv`  
+Final model-ready dataset with engineered features and `label` (`1=ROY`, `0=not`).
+
+## Data Flow
+
+1. `raw_season_stats_all_seasons.csv` is created in data collection.
+2. Rookie filtering + ROY labeling creates `rookies_labeled.csv`.
+3. Feature engineering + preflight checks creates `roy_dataset.csv`.
+
+## Feature Buckets in `roy_dataset.csv`
+
+- Availability/volume: `GP`, `MIN`, `TOTAL_POINTS`, `TOTAL_MINUTES`, `MIN_per_game`
+- Box production: per-game and per-75 metrics
+- Efficiency/usage: `TS`, `FG3_PCT`, `USG_RATE`, `TOV`
+- Team context: `TEAM_WIN_PCT`, `MINUTES_SHARE`, `POINTS_SHARE`
+- Rookie-relative context: seasonal rookie rank features (production/usage/team success)
+- Player context: `DRAFT_PICK_LOG`, `AGE_OCT1`
+
+## Validation Notes
+
+Before writing `roy_dataset.csv`, preflight checks fail fast on:
+- missing required columns
+- duplicate `PLAYER_ID + SEASON`
+- completed seasons without exactly 1 ROY label
+
+These checks help prevent training on broken data.

@@ -1,30 +1,65 @@
-Developer notes and how to run the ROY pipeline
+# README_DEV
 
-1) Install dependencies (Windows cmd):
+Developer-oriented runbook for the ROY pipeline.
 
+## Setup (Windows CMD)
+
+```cmd
 pip install -r requirements.txt
 pip install -r requirements_extra.txt
+```
 
-2) Data collection (this can take several minutes due to many API requests):
+## Standard Pipeline Run
 
+```cmd
 python src\data_collection.py
-
-This creates `data_processed/rookies_labeled.csv` and `data_processed/raw_season_stats_all_seasons.csv`.
-
-3) Prepare dataset:
-
 python src\prepare_data.py
-
-This creates `data_processed/roy_dataset.csv`.
-
-4) Train model and generate predictions:
-
 python src\train_model.py
+```
 
-This saves best model to `outputs/roy_model.pkl` and predictions to `predictions/roy_predictions_all_seasons.csv`.
+## What Each Step Produces
 
-Notes and data sources:
-- Primary source: `nba_api` (stats.nba.com). Key endpoints used: `LeagueDashPlayerStats`, `CommonPlayerInfo`, and `PlayerAwards`.
-- Scope: seasons 2010-11 through 2024-25 (configurable in `src/data_collection.py`).
+1. `python src\data_collection.py`
+- `data_processed/raw_season_stats_all_seasons.csv`
+- `data_processed/rookies_labeled.csv`
 
-Feature choices and justification are in `data_processed/README.md`.
+2. `python src\prepare_data.py`
+- Runs preflight checks (required columns, duplicates, ROY-label sanity)
+- `data_processed/roy_dataset.csv`
+
+3. `python src\train_model.py`
+- `outputs/roy_model.pkl`
+- `outputs/run_info.json`
+- `predictions/roy_predictions_all_seasons.csv`
+- `predictions/predictions.csv` (latest season)
+
+## Refresh Options
+
+Refresh current season:
+
+```cmd
+python src\data_collection.py --refresh-current-season-stats
+```
+
+Refresh all seasons:
+
+```cmd
+python src\data_collection.py --refresh-all-season-stats
+```
+
+## Current Modeling Notes
+
+- Prediction presentation uses season-normalized race odds.
+- Raw model probability is still saved (`prob_roy_raw`) for analysis.
+- Final UI-facing output should use `predictions/predictions.csv`.
+
+## Troubleshooting
+
+- If API calls timeout, rerun collection; cache + retry/backoff should recover most failures.
+- If `prepare_data.py` fails preflight, fix the input issue before training.
+- If `nba_api` import fails, confirm the active interpreter is `.venv` and reinstall requirements.
+
+## Related Docs
+
+- `README.md` for high-level project overview
+- `data_processed/README.md` for dataset-level notes
