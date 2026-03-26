@@ -67,3 +67,20 @@ python src\data_collection.py --refresh-all-season-stats
 
 - `README.md` for high-level project overview
 - `data_processed/README.md` for dataset-level notes
+
+## API Service (Read-Only, v1)
+
+Run locally (from repo root):
+
+```cmd
+python -m uvicorn src.api_service:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Primary endpoints:
+- `GET /api/v1/runs/latest`
+- `GET /api/v1/leaderboard?season=2025-26&top_n=10`
+- `GET /api/v1/player/{player_id}?season=2025-26`
+- `GET /api/v1/trends?season=2025-26&player_id={player_id}`
+- `GET /api/v1/filters?season=2025-26`
+- `GET /health/live`
+- `GET /health/ready`

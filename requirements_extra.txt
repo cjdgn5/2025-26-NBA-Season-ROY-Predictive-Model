@@ -1,6 +1,8 @@
 # Additional packages for the ROY modeling pipeline
 xgboost==3.1.0
 joblib==1.5.3
+fastapi==0.116.1
+uvicorn==0.35.0
 
 # Install order (Windows cmd):
 # pip install -r requirements.txt
