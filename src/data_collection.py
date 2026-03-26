@@ -204,10 +204,13 @@ def player_has_roy(player_id: int, season: str) -> bool:
 def fetch_player_info_cached(player_id: int) -> dict:
     """Load or fetch player bio info used for feature engineering."""
     cache = RAW_DIR / f'info_{player_id}.json'
+    required_keys = {'draft_pick', 'draft_round', 'birthdate', 'position'}
     if cache.exists():
-        return load_json(cache)
+        cached = load_json(cache)
+        if required_keys.issubset(cached.keys()):
+            return cached
 
-    info = {'draft_pick': None, 'draft_round': None, 'birthdate': None}
+    info = {'draft_pick': None, 'draft_round': None, 'birthdate': None, 'position': None}
     try:
         df = run_with_retries(
             lambda: commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_data_frames()[0],
@@ -230,6 +233,8 @@ def fetch_player_info_cached(player_id: int) -> dict:
                 info['draft_round'] = None
 
             info['birthdate'] = str(birthdate) if birthdate not in [None, ''] else None
+            position = row.get('POSITION')
+            info['position'] = str(position).strip() if position not in [None, ''] else None
         save_json(info, cache)
         time.sleep(0.6)
     except Exception as e:

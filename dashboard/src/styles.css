@@ -93,7 +93,6 @@ body {
   margin-bottom: 0.35rem;
 }
 
-.control input,
 .control select,
 .segmented button {
   width: 100%;
@@ -105,9 +104,14 @@ body {
   font-family: inherit;
 }
 
-.control input,
 .control select {
   padding: 0 0.6rem;
+}
+
+.control select:disabled {
+  color: var(--muted);
+  background: #f7f0e3;
+  cursor: not-allowed;
 }
 
 .segmented {
@@ -165,12 +169,8 @@ body {
 
 .content-grid {
   margin-top: 0.9rem;
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 0.9rem;
 }
 
-.chart-card,
 .table-card {
   padding: 0.95rem;
 }
@@ -178,23 +178,6 @@ body {
 h2 {
   margin: 0 0 0.85rem;
   font-size: 1rem;
-}
-
-.bars {
-  display: grid;
-  gap: 0.6rem;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr 56px;
-  gap: 0.45rem;
-  align-items: center;
-}
-
-.bar-label,
-.bar-value {
-  font-size: 0.8rem;
 }
 
 .bar-track {
@@ -208,6 +191,18 @@ h2 {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #d4551f, #ea8c2e);
+}
+
+.odds-cell {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 136px;
+}
+
+.odds-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
 }
 
 .table-wrap {
@@ -266,9 +261,5 @@ th {
 
   .controls {
     grid-template-columns: repeat(2, minmax(140px, 1fr));
-  }
-
-  .content-grid {
-    grid-template-columns: 1fr;
   }
 }

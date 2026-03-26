@@ -96,12 +96,12 @@ def train():
     df_train = df_train[df_train['MIN'] >= MIN_THRESHOLD].copy()  # Filter low minutes
     
     # Separate features for training
-    X_train = df_train.drop(columns=['PLAYER_ID','PLAYER_NAME','SEASON','label'])
+    X_train = df_train.drop(columns=['PLAYER_ID','PLAYER_NAME','SEASON','TEAM','POSITION','label'], errors='ignore')
     y_train = df_train['label']
     groups_train = df_train['SEASON']  # For GroupKFold
     
     # All data for final predictions (including current season and low-minute players)
-    X_all = df.drop(columns=['PLAYER_ID','PLAYER_NAME','SEASON','label'])
+    X_all = df.drop(columns=['PLAYER_ID','PLAYER_NAME','SEASON','TEAM','POSITION','label'], errors='ignore')
     
     # Create pipeline to prevent data leakage (scaler fit inside each CV fold)
     lr_pipeline = Pipeline([

@@ -106,6 +106,7 @@ def prepare():
     # Basic cleaning
     df['PLAYER_ID'] = pd.to_numeric(df.get('PLAYER_ID', -1), errors='coerce').fillna(-1).astype(int)
     df['TEAM_ID'] = pd.to_numeric(df.get('TEAM_ID', -1), errors='coerce').fillna(-1).astype(int)
+    df['TEAM'] = df.get('TEAM_ABBREVIATION', '').fillna('').astype(str).str.strip()
     df['MIN'] = pd.to_numeric(df.get('MIN', 0), errors='coerce').fillna(0)
     df['GP'] = pd.to_numeric(df.get('GP', 0), errors='coerce').fillna(0)
     gs_raw = df['GS'] if 'GS' in df.columns else pd.Series(0, index=df.index)
@@ -207,6 +208,7 @@ def prepare():
             'draft_pick': info.get('draft_pick'),
             'draft_round': info.get('draft_round'),
             'birthdate': info.get('birthdate'),
+            'position': info.get('position'),
         }
     df['DRAFT_PICK_RAW'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('draft_pick'))
     df['DRAFT_PICK'] = pd.to_numeric(df['DRAFT_PICK_RAW'], errors='coerce').fillna(61)
@@ -222,6 +224,9 @@ def prepare():
 
     # Draft normalization features for improved scale handling.
     df['DRAFT_PICK_LOG'] = np.log1p(df['DRAFT_PICK'])
+    df['POSITION'] = df['PLAYER_ID'].map(lambda pid: player_info.get(pid, {}).get('position'))
+    df['POSITION'] = df['POSITION'].fillna('').astype(str).str.strip()
+    df.loc[df['POSITION'] == '', 'POSITION'] = 'Unknown'
     # Rookie-relative rank features within each season.
     df['PTS_rank_rookies'] = df.groupby('SEASON')['PTS_per_game'].rank(method='min', ascending=False)
     df['MIN_rank_rookies'] = df.groupby('SEASON')['TOTAL_MINUTES'].rank(method='min', ascending=False)
@@ -250,7 +255,7 @@ def prepare():
     # Keep label
     df['label'] = df['ROY'].astype(int)
 
-    out_cols = ['PLAYER_ID','PLAYER_NAME','SEASON'] + features + ['label']
+    out_cols = ['PLAYER_ID','PLAYER_NAME','SEASON','TEAM','POSITION'] + features + ['label']
     final = df[out_cols].copy()
 
     out_path = PROCESSED_DIR / 'roy_dataset.csv'

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   FiltersResponse,
   LatestRunResponse,
@@ -19,10 +19,10 @@ function num(value: number | null | undefined, digits = 1): string {
 }
 
 function trendGlyph(direction: LeaderboardRow["trend_direction"]): string {
-  if (direction === "up") return "↑";
-  if (direction === "down") return "↓";
-  if (direction === "new") return "•";
-  return "→";
+  if (direction === "up") return "^";
+  if (direction === "down") return "v";
+  if (direction === "new") return "*";
+  return ">";
 }
 
 function trendClass(direction: LeaderboardRow["trend_direction"]): string {
@@ -103,8 +103,6 @@ export default function App() {
     void loadLeaderboard();
   }, [season, topN, teamFilter, positionFilter, draftTierFilter]);
 
-  const bars = useMemo(() => (board?.rows ?? []).slice(0, 10), [board]);
-
   return (
     <div className="page">
       <header className="header">
@@ -127,7 +125,9 @@ export default function App() {
       <section className="controls card">
         <div className="control">
           <label>Season</label>
-          <input value={season} onChange={(e) => setSeason(e.target.value)} />
+          <select value={season} onChange={(e) => setSeason(e.target.value)} disabled>
+            <option value={season}>{season}</option>
+          </select>
         </div>
         <div className="control">
           <label>Top N</label>
@@ -199,23 +199,6 @@ export default function App() {
       {error ? <div className="error card">{error}</div> : null}
 
       <section className="content-grid">
-        <article className="card chart-card">
-          <h2>Top 10 Race Odds</h2>
-          <div className="bars">
-            {bars.map((row) => (
-              <div className="bar-row" key={row.player_id}>
-                <span className="bar-label">
-                  #{row.rank} {row.player_name}
-                </span>
-                <div className="bar-track">
-                  <div className="bar-fill" style={{ width: `${Math.max(row.race_odds * 100, 1)}%` }} />
-                </div>
-                <span className="bar-value">{pct(row.race_odds, 1)}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-
         <article className="card table-card">
           <h2>{loading ? "Loading leaderboard..." : "Current Leaderboard"}</h2>
           <div className="table-wrap">
@@ -225,6 +208,7 @@ export default function App() {
                   <th>Rank</th>
                   <th>Player</th>
                   <th>Team</th>
+                  <th>Position</th>
                   <th>Odds</th>
                   <th>Trend</th>
                   <th>PTS</th>
@@ -244,10 +228,22 @@ export default function App() {
                     <td>{row.rank}</td>
                     <td className="player">
                       <strong>{row.player_name}</strong>
-                      <span>{row.position ?? "-"}</span>
                     </td>
                     <td>{row.team ?? "-"}</td>
-                    <td>{pct(row.race_odds, 2)}</td>
+                    <td>{row.position ?? "-"}</td>
+                    <td>
+                      <div className="odds-cell">
+                        <div className="odds-meta">
+                          <span>{pct(row.race_odds, 2)}</span>
+                        </div>
+                        <div className="bar-track">
+                          <div
+                            className="bar-fill"
+                            style={{ width: `${Math.max(row.race_odds * 100, 1)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </td>
                     <td className={trendClass(row.trend_direction)}>
                       {trendGlyph(row.trend_direction)} {pct(row.trend_delta, 2)}
                     </td>
