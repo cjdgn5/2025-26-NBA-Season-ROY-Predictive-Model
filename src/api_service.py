@@ -10,6 +10,7 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,16 @@ HISTORY_DIR = PRED_DIR / "history"
 RACE_ODDS_TOLERANCE = 1e-3
 
 app = FastAPI(title="ROY Dashboard API", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _error(code: str, message: str, details=None):
