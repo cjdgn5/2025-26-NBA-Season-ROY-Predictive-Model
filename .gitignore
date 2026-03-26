@@ -213,3 +213,7 @@ outputs/
 predictions/*
 !predictions/
 !predictions/predictions_two_col.csv
+
+# Frontend
+node_modules/
+*.tsbuildinfo
